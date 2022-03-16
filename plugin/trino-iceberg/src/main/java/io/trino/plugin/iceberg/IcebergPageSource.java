@@ -30,7 +30,12 @@ import java.util.Optional;
 import java.util.OptionalLong;
 
 import static com.google.common.base.Throwables.throwIfInstanceOf;
+import static io.airlift.slice.Slices.utf8Slice;
 import static io.trino.plugin.base.util.Closables.closeAllSuppress;
+import static io.trino.plugin.iceberg.IcebergColumnHandle.FILE_SIZE_COLUMN_NAME;
+import static io.trino.plugin.iceberg.IcebergColumnHandle.FILE_SIZE_TYPE;
+import static io.trino.plugin.iceberg.IcebergColumnHandle.PATH_COLUMN_NAME;
+import static io.trino.plugin.iceberg.IcebergColumnHandle.PATH_TYPE;
 import static io.trino.plugin.iceberg.IcebergErrorCode.ICEBERG_BAD_DATA;
 import static io.trino.plugin.iceberg.IcebergUtil.deserializePartitionValue;
 import static java.util.Objects.requireNonNull;
@@ -44,6 +49,8 @@ public class IcebergPageSource
     private final Optional<ReaderProjectionsAdapter> projectionsAdapter;
 
     public IcebergPageSource(
+            String path,
+            Long fileSize,
             List<IcebergColumnHandle> columns,
             Map<Integer, Optional<String>> partitionKeys,
             ConnectorPageSource delegate,
@@ -67,6 +74,19 @@ public class IcebergPageSource
                 prefilledBlocks[outputIndex] = Utils.nativeValueToBlock(type, prefilledValue);
                 delegateIndexes[outputIndex] = -1;
             }
+            else if (column.getName().equals(PATH_COLUMN_NAME)) {
+                prefilledBlocks[outputIndex] = Utils.nativeValueToBlock(PATH_TYPE, utf8Slice(path));
+                delegateIndexes[outputIndex] = -1;
+            }
+            else if (column.getName().equals(FILE_SIZE_COLUMN_NAME)) {
+                prefilledBlocks[outputIndex] = Utils.nativeValueToBlock(FILE_SIZE_TYPE, fileSize);
+                delegateIndexes[outputIndex] = -1;
+            }
+//            else if (column.getName().equals(FILE_MODIFIED_TIME_COLUMN_NAME)) {
+//                long packedTimestamp = packDateTimeWithZone(fileModifiedTime, UTC_KEY);
+//                prefilledBlocks[outputIndex] = Utils.nativeValueToBlock(FILE_MODIFIED_TIME_TYPE, packedTimestamp);
+//                delegateIndexes[outputIndex] = -1;
+//            }
             else {
                 delegateIndexes[outputIndex] = delegateIndex;
                 delegateIndex++;

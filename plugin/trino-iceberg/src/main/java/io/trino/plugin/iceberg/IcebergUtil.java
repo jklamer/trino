@@ -15,6 +15,7 @@ package io.trino.plugin.iceberg;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Streams;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceUtf8;
 import io.airlift.slice.Slices;
@@ -169,8 +170,8 @@ public final class IcebergUtil
 
     public static List<IcebergColumnHandle> getColumns(Schema schema, TypeManager typeManager)
     {
-        return schema.columns().stream()
-                .map(column -> getColumnHandle(column, typeManager))
+        return Streams.concat(schema.columns().stream()
+                .map(column -> getColumnHandle(column, typeManager)), Stream.of(IcebergColumnHandle.pathColumnHandle(), IcebergColumnHandle.fileSizeColumnHandle()))
                 .collect(toImmutableList());
     }
 

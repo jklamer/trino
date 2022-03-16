@@ -25,11 +25,21 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+import static io.trino.spi.type.BigintType.BIGINT;
+import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;
 
 public class IcebergColumnHandle
         implements ColumnHandle
 {
+    public static final String PATH_COLUMN_NAME = "$path";
+    public static final Type PATH_TYPE = VARCHAR;
+    public static final Integer PATH_COLUMN_ID = -1;
+
+    public static final String FILE_SIZE_COLUMN_NAME = "$file_size";
+    public static final Type FILE_SIZE_TYPE = BIGINT;
+    public static final Integer FILE_SIZE_COLUMN_ID = -2;
+
     private final ColumnIdentity baseColumnIdentity;
     private final Type baseType;
     // The list of field ids to indicate the projected part of the top-level column represented by baseColumnIdentity
@@ -165,5 +175,17 @@ public class IcebergColumnHandle
     public String toString()
     {
         return getId() + ":" + getName() + ":" + type.getDisplayName();
+    }
+
+    public static IcebergColumnHandle pathColumnHandle()
+    {
+        ColumnIdentity columnIdentity = new ColumnIdentity(PATH_COLUMN_ID, PATH_COLUMN_NAME, ColumnIdentity.TypeCategory.PRIMITIVE, ImmutableList.of());
+        return new IcebergColumnHandle(columnIdentity, PATH_TYPE, ImmutableList.of(), PATH_TYPE, Optional.empty());
+    }
+
+    public static IcebergColumnHandle fileSizeColumnHandle()
+    {
+        ColumnIdentity columnIdentity = new ColumnIdentity(FILE_SIZE_COLUMN_ID, FILE_SIZE_COLUMN_NAME, ColumnIdentity.TypeCategory.PRIMITIVE, ImmutableList.of());
+        return new IcebergColumnHandle(columnIdentity, FILE_SIZE_TYPE, ImmutableList.of(), FILE_SIZE_TYPE, Optional.empty());
     }
 }
