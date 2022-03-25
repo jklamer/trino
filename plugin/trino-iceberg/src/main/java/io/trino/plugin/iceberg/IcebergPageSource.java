@@ -76,17 +76,12 @@ public class IcebergPageSource
             }
             else if (column.getName().equals(PATH_COLUMN_NAME)) {
                 prefilledBlocks[outputIndex] = Utils.nativeValueToBlock(PATH_TYPE, utf8Slice(path));
-                delegateIndexes[outputIndex] = -1;
+                delegateIndexes[outputIndex] = -2;
             }
             else if (column.getName().equals(FILE_SIZE_COLUMN_NAME)) {
                 prefilledBlocks[outputIndex] = Utils.nativeValueToBlock(FILE_SIZE_TYPE, fileSize);
-                delegateIndexes[outputIndex] = -1;
+                delegateIndexes[outputIndex] = -3;
             }
-//            else if (column.getName().equals(FILE_MODIFIED_TIME_COLUMN_NAME)) {
-//                long packedTimestamp = packDateTimeWithZone(fileModifiedTime, UTC_KEY);
-//                prefilledBlocks[outputIndex] = Utils.nativeValueToBlock(FILE_MODIFIED_TIME_TYPE, packedTimestamp);
-//                delegateIndexes[outputIndex] = -1;
-//            }
             else {
                 delegateIndexes[outputIndex] = delegateIndex;
                 delegateIndex++;

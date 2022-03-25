@@ -115,6 +115,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -873,8 +874,9 @@ public class IcebergMetadata
     {
         Table icebergTable = catalog.loadTable(session, table);
 
-        List<ColumnMetadata> columns = getColumnMetadatas(icebergTable);
-
+        List<ColumnMetadata> nativeColumns = getColumnMetadatas(icebergTable);
+        List<ColumnMetadata> syntheticColumns = getSyntheticColumnMetadata();
+        List<ColumnMetadata> columns = ImmutableList.<ColumnMetadata>builder().addAll(nativeColumns).addAll(syntheticColumns).build();
         ImmutableMap.Builder<String, Object> properties = ImmutableMap.builder();
         properties.put(FILE_FORMAT_PROPERTY, getFileFormat(icebergTable));
         if (!icebergTable.spec().fields().isEmpty()) {
@@ -897,6 +899,20 @@ public class IcebergMetadata
                                 .setType(toTrinoType(column.type(), typeManager))
                                 .setNullable(column.isOptional())
                                 .setComment(Optional.ofNullable(column.doc()))
+                                .build())
+                .collect(toImmutableList());
+    }
+
+    private List<ColumnMetadata> getSyntheticColumnMetadata()
+    {
+        return Stream.of(IcebergColumnHandle.pathColumnHandle(), IcebergColumnHandle.fileSizeColumnHandle())
+                .map(column ->
+                        ColumnMetadata.builder()
+                                .setName(column.getName())
+                                .setType(column.getType())
+                                .setNullable(false)
+                                .setHidden(true)
+                                .setComment(column.getComment())
                                 .build())
                 .collect(toImmutableList());
     }

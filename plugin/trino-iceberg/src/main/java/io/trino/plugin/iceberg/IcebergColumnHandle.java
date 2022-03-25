@@ -17,6 +17,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.type.Type;
@@ -24,6 +25,7 @@ import io.trino.spi.type.Type;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.VarcharType.VARCHAR;
@@ -39,6 +41,8 @@ public class IcebergColumnHandle
     public static final String FILE_SIZE_COLUMN_NAME = "$file_size";
     public static final Type FILE_SIZE_TYPE = BIGINT;
     public static final Integer FILE_SIZE_COLUMN_ID = -2;
+
+    private static final Set<String> synthetic_columns = ImmutableSet.of(PATH_COLUMN_NAME, FILE_SIZE_COLUMN_NAME);
 
     private final ColumnIdentity baseColumnIdentity;
     private final Type baseType;

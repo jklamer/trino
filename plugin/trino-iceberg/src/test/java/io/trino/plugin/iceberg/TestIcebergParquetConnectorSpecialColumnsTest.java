@@ -14,7 +14,6 @@
 package io.trino.plugin.iceberg;
 
 import io.trino.Session;
-import io.trino.testing.MaterializedResult;
 import io.trino.testing.sql.TestTable;
 import org.testng.annotations.Test;
 
@@ -22,7 +21,6 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static io.trino.plugin.iceberg.IcebergFileFormat.PARQUET;
-import static org.testng.Assert.assertEquals;
 
 public class TestIcebergParquetConnectorSpecialColumnsTest
         extends BaseIcebergConnectorTest
@@ -59,7 +57,11 @@ public class TestIcebergParquetConnectorSpecialColumnsTest
                     .collect(Collectors.joining(", "));
             assertUpdate(withSmallRowGroups(getSession()), "INSERT INTO " + tableName + " VALUES " + values, 100);
 
-            System.out.println(getDistributedQueryRunner().execute("SELECT * , \"$path\" FROM " + tableName));
+            System.out.println(getDistributedQueryRunner().execute("SELECT * , \"$path\" , \"$file_size\" FROM " + tableName));
+            System.out.println(getDistributedQueryRunner().execute("SELECT DISTINCT \"$path\" FROM " + tableName));
+            System.out.println(getDistributedQueryRunner().execute("SELECT COUNT(*) FROM " + tableName + " GROUP BY \"$path\""));
+            System.out.println(getDistributedQueryRunner().execute("SELECT COUNT(*) FROM " + "(SELECT DISTINCT \"$path\" FROM " + tableName+" )"));
+            System.out.println(getDistributedQueryRunner().execute("DESCRIBE " + tableName));
         }
     }
 
