@@ -22,10 +22,10 @@ import java.util.stream.IntStream;
 
 import static io.trino.plugin.iceberg.IcebergFileFormat.PARQUET;
 
-public class TestIcebergParquetConnectorSpecialColumnsTest
+public class TestIcebergParquetConnectorSyntheticColumnsTest
         extends BaseIcebergConnectorTest
 {
-    public TestIcebergParquetConnectorSpecialColumnsTest()
+    public TestIcebergParquetConnectorSyntheticColumnsTest()
     {
         super(PARQUET);
     }
@@ -45,23 +45,46 @@ public class TestIcebergParquetConnectorSpecialColumnsTest
     }
 
     @Test
-    public void testRowGroupResetDictionary()
+    public void testSyntheticSelect()
     {
         try (TestTable table = new TestTable(
                 getQueryRunner()::execute,
                 "test_row_group_reset_dictionary",
-                "(plain_col varchar, dict_col int)")) {
+                "(name varchar, age int)")) {
             String tableName = table.getName();
             String values = IntStream.range(0, 100)
-                    .mapToObj(i -> "('ABCDEFGHIJ" + i + "' , " + (i < 20 ? "1" : "null") + ")")
+                    .mapToObj(i -> "('ABCDEFGHIJ" + i + "' , " + i + ")")
                     .collect(Collectors.joining(", "));
-            assertUpdate(withSmallRowGroups(getSession()), "INSERT INTO " + tableName + " VALUES " + values, 100);
+            assertUpdate(getSession(), "INSERT INTO " + tableName + " VALUES " + values, 100);
 
-            System.out.println(getDistributedQueryRunner().execute("SELECT * , \"$path\" , \"$file_size\" FROM " + tableName));
+            // fails?
+            //assertQuery(getSession(), "SELECT * , \"$path\" , \"$file_size\" FROM " + tableName);
+            getDistributedQueryRunner().execute("SELECT * , \"$path\" , \"$file_size\" FROM " + tableName);
             System.out.println(getDistributedQueryRunner().execute("SELECT DISTINCT \"$path\" FROM " + tableName));
+            System.out.println(getDistributedQueryRunner().execute("SELECT AVG(\"$file_size\") FROM " + tableName));
             System.out.println(getDistributedQueryRunner().execute("SELECT COUNT(*) FROM " + tableName + " GROUP BY \"$path\""));
-            System.out.println(getDistributedQueryRunner().execute("SELECT COUNT(*) FROM " + "(SELECT DISTINCT \"$path\" FROM " + tableName+" )"));
+            System.out.println(getDistributedQueryRunner().execute("SELECT COUNT(*) FROM " + "(SELECT DISTINCT \"$path\" FROM " + tableName + " )"));
             System.out.println(getDistributedQueryRunner().execute("DESCRIBE " + tableName));
+        }
+    }
+
+    @Test(expectedExceptions = RuntimeException.class)
+    public void testIllegalInsert()
+    {
+        try (TestTable table = new TestTable(
+                getQueryRunner()::execute,
+                "test_row_group_reset_dictionary",
+                "(name varchar, age int)")) {
+            String tableName = table.getName();
+            String values = IntStream.range(0, 100)
+                    .mapToObj(i -> "('ABCDEFGHIJ" + i + "' , " + i + ")")
+                    .collect(Collectors.joining(", "));
+            assertUpdate(getSession(), "INSERT INTO " + tableName + " VALUES " + values, 100);
+
+            String newValues = IntStream.range(0, 100)
+                    .mapToObj(i -> "('ABCDEFGHIJ" + i + "' , " + i + ", 'some_made_up_path', CAST(4500 as BIGINT))")
+                    .collect(Collectors.joining(", "));
+            getDistributedQueryRunner().execute("INSERT INTO " + tableName + " VALUES " + newValues);
         }
     }
 

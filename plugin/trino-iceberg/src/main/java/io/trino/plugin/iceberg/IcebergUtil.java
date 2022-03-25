@@ -175,6 +175,11 @@ public final class IcebergUtil
                 .collect(toImmutableList());
     }
 
+    public static List<IcebergColumnHandle> getWritableColumns(Schema schema, TypeManager typeManager)
+    {
+        return getColumns(schema, typeManager).stream().filter(icebergColumnHandle -> icebergColumnHandle.getColumnType() != IcebergColumnType.SYNTHESIZED).collect(toImmutableList());
+    }
+
     public static IcebergColumnHandle getColumnHandle(NestedField column, TypeManager typeManager)
     {
         Type type = toTrinoType(column.type(), typeManager);
@@ -183,7 +188,8 @@ public final class IcebergUtil
                 type,
                 ImmutableList.of(),
                 type,
-                Optional.ofNullable(column.doc()));
+                Optional.ofNullable(column.doc()),
+                IcebergColumnType.REGULAR);
     }
 
     public static Map<PartitionField, Integer> getIdentityPartitions(PartitionSpec partitionSpec)

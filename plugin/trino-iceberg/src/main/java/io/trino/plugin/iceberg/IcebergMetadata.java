@@ -138,6 +138,7 @@ import static io.trino.plugin.iceberg.IcebergUtil.getColumns;
 import static io.trino.plugin.iceberg.IcebergUtil.getFileFormat;
 import static io.trino.plugin.iceberg.IcebergUtil.getPartitionKeys;
 import static io.trino.plugin.iceberg.IcebergUtil.getTableComment;
+import static io.trino.plugin.iceberg.IcebergUtil.getWritableColumns;
 import static io.trino.plugin.iceberg.IcebergUtil.newCreateTableTransaction;
 import static io.trino.plugin.iceberg.IcebergUtil.toIcebergSchema;
 import static io.trino.plugin.iceberg.PartitionFields.parsePartitionFields;
@@ -389,6 +390,7 @@ public class IcebergMetadata
                 .setName(column.getName())
                 .setType(column.getType())
                 .setComment(column.getComment())
+                .setHidden(column.getColumnType() == IcebergColumnType.SYNTHESIZED)
                 .build();
     }
 
@@ -473,7 +475,7 @@ public class IcebergMetadata
                 tableMetadata.getTable().getTableName(),
                 SchemaParser.toJson(transaction.table().schema()),
                 PartitionSpecParser.toJson(transaction.table().spec()),
-                getColumns(transaction.table().schema(), typeManager),
+                getWritableColumns(transaction.table().schema(), typeManager),
                 transaction.table().location(),
                 getFileFormat(transaction.table()),
                 transaction.table().properties(),
@@ -534,7 +536,7 @@ public class IcebergMetadata
                 table.getTableName(),
                 SchemaParser.toJson(icebergTable.schema()),
                 PartitionSpecParser.toJson(icebergTable.spec()),
-                getColumns(icebergTable.schema(), typeManager),
+                getWritableColumns(icebergTable.schema(), typeManager),
                 icebergTable.location(),
                 getFileFormat(icebergTable),
                 icebergTable.properties(),
@@ -658,7 +660,7 @@ public class IcebergMetadata
     @Override
     public ColumnHandle getDeleteRowIdColumnHandle(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
-        return new IcebergColumnHandle(primitiveColumnIdentity(0, "$row_id"), BIGINT, ImmutableList.of(), BIGINT, Optional.empty());
+        return new IcebergColumnHandle(primitiveColumnIdentity(0, "$row_id"), BIGINT, ImmutableList.of(), BIGINT, Optional.empty(), IcebergColumnType.SYNTHESIZED);
     }
 
     @Override
@@ -1141,7 +1143,8 @@ public class IcebergMetadata
                 column.getBaseType(),
                 fullPath.build(),
                 projectedColumnType,
-                Optional.empty());
+                Optional.empty(),
+                column.getColumnType());
     }
 
     @Override
@@ -1209,7 +1212,7 @@ public class IcebergMetadata
                 table.getTableName(),
                 SchemaParser.toJson(icebergTable.schema()),
                 PartitionSpecParser.toJson(icebergTable.spec()),
-                getColumns(icebergTable.schema(), typeManager),
+                getWritableColumns(icebergTable.schema(), typeManager),
                 icebergTable.location(),
                 getFileFormat(icebergTable),
                 icebergTable.properties(),
