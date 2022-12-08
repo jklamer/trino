@@ -95,6 +95,10 @@ public class CreateViewTask
         Analysis analysis = analyzerFactory.createAnalyzer(session, parameters, bindParameters(statement, parameters), stateMachine.getWarningCollector())
                 .analyze(statement);
 
+        analysis.getTableColumnReferences().values().stream().flatMap(map -> map.entrySet().stream()).forEach(tableColumnsEntry -> {
+            accessControl.checkCanCreateViewWithSelectFromColumns(session.toSecurityContext(), tableColumnsEntry.getKey(), tableColumnsEntry.getValue());
+        });
+
         List<ViewColumn> columns = analysis.getOutputDescriptor(statement.getQuery())
                 .getVisibleFields().stream()
                 .map(field -> new ViewColumn(field.getName().get(), field.getType().getTypeId(), Optional.empty()))
