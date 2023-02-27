@@ -11,48 +11,37 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.hive.rcfile;
+package io.trino.plugin.hive.avro;
 
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Maps;
+import com.google.inject.Inject;
 import io.airlift.slice.Slices;
 import io.airlift.units.DataSize;
-import io.airlift.units.DataSize.Unit;
 import io.trino.filesystem.TrinoFileSystem;
+import io.trino.filesystem.TrinoInput;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.filesystem.hdfs.HdfsFileSystemFactory;
 import io.trino.filesystem.memory.MemoryInputFile;
 import io.trino.hdfs.HdfsEnvironment;
-import io.trino.hive.formats.FileCorruptionException;
-import io.trino.hive.formats.encodings.ColumnEncodingFactory;
-import io.trino.hive.formats.encodings.binary.BinaryColumnEncodingFactory;
-import io.trino.hive.formats.encodings.text.TextColumnEncodingFactory;
-import io.trino.hive.formats.encodings.text.TextEncodingOptions;
-import io.trino.hive.formats.rcfile.RcFileReader;
+import io.trino.hive.formats.avro.AvroNativeLogicalTypeManager;
 import io.trino.plugin.hive.AcidInfo;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.HiveColumnHandle;
-import io.trino.plugin.hive.HiveConfig;
 import io.trino.plugin.hive.HivePageSourceFactory;
-import io.trino.plugin.hive.HiveTimestampPrecision;
 import io.trino.plugin.hive.MonitoredTrinoInputFile;
 import io.trino.plugin.hive.ReaderColumns;
 import io.trino.plugin.hive.ReaderPageSource;
 import io.trino.plugin.hive.acid.AcidTransaction;
-import io.trino.plugin.hive.util.HiveUtil;
 import io.trino.spi.TrinoException;
-import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.EmptyPageSource;
 import io.trino.spi.predicate.TupleDomain;
-import io.trino.spi.type.Type;
 import io.trino.spi.type.TypeManager;
+import org.apache.avro.Schema;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
-import org.joda.time.DateTimeZone;
 
-import javax.inject.Inject;
-
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Optional;
@@ -60,51 +49,36 @@ import java.util.OptionalInt;
 import java.util.Properties;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Strings.nullToEmpty;
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static io.trino.plugin.hive.HiveErrorCode.HIVE_BAD_DATA;
 import static io.trino.plugin.hive.HiveErrorCode.HIVE_CANNOT_OPEN_SPLIT;
 import static io.trino.plugin.hive.HivePageSourceProvider.projectBaseColumns;
-import static io.trino.plugin.hive.HiveSessionProperties.getTimestampPrecision;
+import static io.trino.plugin.hive.HiveSessionProperties.isAvroNativeReaderEnabled;
 import static io.trino.plugin.hive.ReaderPageSource.noProjectionAdaptation;
-import static io.trino.plugin.hive.util.HiveClassNames.COLUMNAR_SERDE_CLASS;
-import static io.trino.plugin.hive.util.HiveClassNames.LAZY_BINARY_COLUMNAR_SERDE_CLASS;
+import static io.trino.plugin.hive.util.HiveClassNames.AVRO_SERDE_CLASS;
 import static io.trino.plugin.hive.util.HiveUtil.getDeserializerClassName;
-import static io.trino.plugin.hive.util.SerdeConstants.SERIALIZATION_LIB;
+import static io.trino.plugin.hive.util.HiveUtil.splitError;
 import static java.lang.Math.min;
-import static java.util.Objects.requireNonNull;
 
-public class RcFilePageSourceFactory
+public class AvroHivePageSourceFactory
         implements HivePageSourceFactory
 {
-    private static final DataSize BUFFER_SIZE = DataSize.of(8, Unit.MEGABYTE);
+    private static final DataSize BUFFER_SIZE = DataSize.of(8, DataSize.Unit.MEGABYTE);
 
     private final TypeManager typeManager;
     private final HdfsEnvironment hdfsEnvironment;
     private final FileFormatDataSourceStats stats;
-    private final DateTimeZone timeZone;
 
     @Inject
-    public RcFilePageSourceFactory(TypeManager typeManager, HdfsEnvironment hdfsEnvironment, FileFormatDataSourceStats stats, HiveConfig hiveConfig)
+    public AvroHivePageSourceFactory(TypeManager typeManager, HdfsEnvironment hdfsEnvironment, FileFormatDataSourceStats stats)
     {
-        this.typeManager = requireNonNull(typeManager, "typeManager is null");
-        this.hdfsEnvironment = requireNonNull(hdfsEnvironment, "hdfsEnvironment is null");
-        this.stats = requireNonNull(stats, "stats is null");
-        this.timeZone = hiveConfig.getRcfileDateTimeZone();
-    }
-
-    public static Properties stripUnnecessaryProperties(Properties schema)
-    {
-        if (LAZY_BINARY_COLUMNAR_SERDE_CLASS.equals(getDeserializerClassName(schema))) {
-            Properties stripped = new Properties();
-            stripped.put(SERIALIZATION_LIB, schema.getProperty(SERIALIZATION_LIB));
-            return stripped;
-        }
-        return schema;
+        this.typeManager = typeManager;
+        this.hdfsEnvironment = hdfsEnvironment;
+        this.stats = stats;
     }
 
     @Override
-    public Optional<ReaderPageSource> createPageSource(
-            Configuration configuration,
+    public Optional<ReaderPageSource> createPageSource(Configuration configuration,
             ConnectorSession session,
             Path path,
             long start,
@@ -118,18 +92,12 @@ public class RcFilePageSourceFactory
             boolean originalFile,
             AcidTransaction transaction)
     {
-        ColumnEncodingFactory columnEncodingFactory;
-        String deserializerClassName = getDeserializerClassName(schema);
-        if (deserializerClassName.equals(LAZY_BINARY_COLUMNAR_SERDE_CLASS)) {
-            columnEncodingFactory = new BinaryColumnEncodingFactory(timeZone);
-        }
-        else if (deserializerClassName.equals(COLUMNAR_SERDE_CLASS)) {
-            columnEncodingFactory = new TextColumnEncodingFactory(TextEncodingOptions.fromSchema(Maps.fromProperties(schema)));
-        }
-        else {
+        if (!isAvroNativeReaderEnabled(session)) {
             return Optional.empty();
         }
-
+        else if (!AVRO_SERDE_CLASS.equals(getDeserializerClassName(schema))) {
+            return Optional.empty();
+        }
         checkArgument(acidInfo.isEmpty(), "Acid is not supported");
 
         List<HiveColumnHandle> projectedReaderColumns = columns;
@@ -143,13 +111,22 @@ public class RcFilePageSourceFactory
 
         TrinoFileSystem trinoFileSystem = new HdfsFileSystemFactory(hdfsEnvironment).create(session.getIdentity());
         TrinoInputFile inputFile = new MonitoredTrinoInputFile(stats, trinoFileSystem.newInputFile(path.toString()));
+
+        Schema avroSchema;
+        try {
+            avroSchema = AvroHiveFileUtils.determineSchemaOrThrowException(trinoFileSystem, configuration, schema);
+        }
+        catch (IOException e) {
+            throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, "Unable to load or parse schema", e);
+        }
+
         try {
             length = min(inputFile.length() - start, length);
             if (!inputFile.exists()) {
                 throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, "File does not exist");
             }
             if (estimatedFileSize < BUFFER_SIZE.toBytes()) {
-                try (InputStream inputStream = inputFile.newStream()) {
+                try (TrinoInput input = inputFile.newInput(); InputStream inputStream = input.inputStream()) {
                     byte[] data = inputStream.readAllBytes();
                     inputFile = new MemoryInputFile(path.toString(), Slices.wrappedBuffer(data));
                 }
@@ -159,7 +136,11 @@ public class RcFilePageSourceFactory
             throw e;
         }
         catch (Exception e) {
-            throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, HiveUtil.splitError(e, path, start, length), e);
+            if (nullToEmpty(e.getMessage()).trim().equals("Filesystem closed") ||
+                    e instanceof FileNotFoundException) {
+                throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, e);
+            }
+            throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, splitError(e, path, start, length), e);
         }
 
         // Split may be empty now that the correct file size is known
@@ -168,31 +149,10 @@ public class RcFilePageSourceFactory
         }
 
         try {
-            ImmutableMap.Builder<Integer, Type> readColumns = ImmutableMap.builder();
-            HiveTimestampPrecision timestampPrecision = getTimestampPrecision(session);
-            for (HiveColumnHandle column : projectedReaderColumns) {
-                readColumns.put(column.getBaseHiveColumnIndex(), column.getHiveType().getType(typeManager, timestampPrecision));
-            }
-
-            RcFileReader rcFileReader = new RcFileReader(
-                    inputFile,
-                    columnEncodingFactory,
-                    readColumns.buildOrThrow(),
-                    start,
-                    length);
-
-            ConnectorPageSource pageSource = new RcFilePageSource(rcFileReader, projectedReaderColumns);
-            return Optional.of(new ReaderPageSource(pageSource, readerProjections));
+            return Optional.of(new ReaderPageSource(new AvroHivePageSource(inputFile, avroSchema, new HiveAvroTypeManager(new AvroNativeLogicalTypeManager()), start, length), readerProjections));
         }
-        catch (TrinoException e) {
-            throw e;
-        }
-        catch (Throwable e) {
-            String message = HiveUtil.splitError(e, path, start, length);
-            if (e instanceof FileCorruptionException) {
-                throw new TrinoException(HIVE_BAD_DATA, message, e);
-            }
-            throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, message, e);
+        catch (IOException e) {
+            throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, e);
         }
     }
 }
