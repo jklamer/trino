@@ -40,6 +40,7 @@ import io.trino.plugin.hive.MonitoredTrinoInputFile;
 import io.trino.plugin.hive.ReaderColumns;
 import io.trino.plugin.hive.ReaderPageSource;
 import io.trino.plugin.hive.acid.AcidTransaction;
+import io.trino.plugin.hive.util.HiveUtil;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
@@ -168,7 +169,7 @@ public class RcFilePageSourceFactory
                     e instanceof FileNotFoundException) {
                 throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, e);
             }
-            throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, splitError(e, path, start, length), e);
+            throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, HiveUtil.splitError(e, path, start, length), e);
         }
 
         // Split may be empty now that the correct file size is known
@@ -197,7 +198,7 @@ public class RcFilePageSourceFactory
             if (e instanceof TrinoException) {
                 throw (TrinoException) e;
             }
-            String message = splitError(e, path, start, length);
+            String message = HiveUtil.splitError(e, path, start, length);
             if (e instanceof FileCorruptionException) {
                 throw new TrinoException(HIVE_BAD_DATA, message, e);
             }
@@ -206,10 +207,5 @@ public class RcFilePageSourceFactory
             }
             throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, message, e);
         }
-    }
-
-    private static String splitError(Throwable t, Path path, long start, long length)
-    {
-        return format("Error opening Hive split %s (offset=%s, length=%s): %s", path, start, length, t.getMessage());
     }
 }

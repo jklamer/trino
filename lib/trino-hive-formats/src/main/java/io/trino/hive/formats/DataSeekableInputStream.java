@@ -16,6 +16,7 @@ package io.trino.hive.formats;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.filesystem.SeekableInputStream;
+import org.apache.avro.file.SeekableInput;
 import org.openjdk.jol.info.ClassLayout;
 
 import java.io.DataInput;
@@ -36,7 +37,7 @@ import static java.util.Objects.requireNonNull;
 
 public final class DataSeekableInputStream
         extends InputStream
-        implements DataInput
+        implements DataInput, SeekableInput
 {
     private static final int INSTANCE_SIZE = toIntExact(ClassLayout.parseClass(DataSeekableInputStream.class).instanceSize());
     private static final int DEFAULT_BUFFER_SIZE = 4 * 1024;
@@ -58,20 +59,23 @@ public final class DataSeekableInputStream
     private int bufferPosition;
 
     private int bufferFill;
+    private long length;
 
-    public DataSeekableInputStream(SeekableInputStream inputStream)
+    public DataSeekableInputStream(SeekableInputStream inputStream, long length)
     {
-        this(inputStream, DEFAULT_BUFFER_SIZE);
+        this(inputStream, length, DEFAULT_BUFFER_SIZE);
     }
 
-    public DataSeekableInputStream(SeekableInputStream inputStream, int bufferSize)
+    public DataSeekableInputStream(SeekableInputStream inputStream, long length, int bufferSize)
     {
         requireNonNull(inputStream, "inputStream is null");
         checkArgument(bufferSize >= MINIMUM_CHUNK_SIZE, "minimum buffer size of " + MINIMUM_CHUNK_SIZE + " required");
+        checkArgument(length >= 0, "length must be positive");
 
         this.inputStream = inputStream;
         this.buffer = new byte[bufferSize];
         this.slice = Slices.wrappedBuffer(buffer);
+        this.length = length;
     }
 
     public long getReadTimeNanos()
@@ -131,6 +135,20 @@ public final class DataSeekableInputStream
             throws IOException
     {
         return readByte() != 0;
+    }
+
+    @Override
+    public long tell()
+            throws IOException
+    {
+        return getPos();
+    }
+
+    @Override
+    public long length()
+            throws IOException
+    {
+        return length;
     }
 
     @Override

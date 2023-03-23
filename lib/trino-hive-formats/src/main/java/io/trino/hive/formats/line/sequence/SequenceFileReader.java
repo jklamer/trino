@@ -84,8 +84,6 @@ public final class SequenceFileReader
         try {
             requireNonNull(inputFile, "inputFile is null");
             this.location = inputFile.location();
-            this.input = new DataSeekableInputStream(inputFile.newInput().inputStream());
-            closer.register(input);
 
             verify(offset >= 0, "offset is negative");
             verify(offset < inputFile.length(), "offset is greater than data size");
@@ -94,6 +92,9 @@ public final class SequenceFileReader
             long end = offset + length;
             long fileSize = inputFile.length();
             verify(end <= fileSize, "offset plus length is greater than data size");
+
+            this.input = new DataSeekableInputStream(inputFile.newInput().inputStream(), length);
+            closer.register(input);
 
             // read header
             Slice magic = input.readSlice(SEQUENCE_FILE_MAGIC.length());
