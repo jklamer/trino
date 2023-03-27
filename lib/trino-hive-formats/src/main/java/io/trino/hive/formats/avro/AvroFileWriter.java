@@ -20,6 +20,7 @@ import static java.util.Objects.requireNonNull;
 public class AvroFileWriter implements Closeable
 {
     private final DataFileWriter<GenericRecord> fileWriter;
+
     public AvroFileWriter(
             Schema schema,
             OutputStream rawOutput,

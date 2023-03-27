@@ -181,9 +181,7 @@ public final class AvroHiveFileUtils
                     "\"logicalType\":\"" + VARCHAR_TYPE_NAME + "\"," +
                     "\"maxLength\":" + ((VarcharTypeInfo) hiveType.getTypeInfo()).getLength() + "}");
             case BINARY -> Schema.create(Schema.Type.BYTES);
-            case BYTE -> Schema.create(Schema.Type.INT);
-            case SHORT -> Schema.create(Schema.Type.INT);
-            case INT -> Schema.create(Schema.Type.INT);
+            case BYTE, SHORT, INT -> Schema.create(Schema.Type.INT);
             case LONG -> Schema.create(Schema.Type.LONG);
             case FLOAT -> Schema.create(Schema.Type.FLOAT);
             case DOUBLE -> Schema.create(Schema.Type.DOUBLE);

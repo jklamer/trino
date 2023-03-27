@@ -8,8 +8,6 @@ import java.io.IOException;
 public class AvroHivePageSource
         implements ConnectorPageSource
 {
-
-
     @Override
     public long getCompletedBytes()
     {
