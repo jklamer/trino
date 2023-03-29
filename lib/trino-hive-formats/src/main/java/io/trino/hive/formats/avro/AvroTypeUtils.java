@@ -54,8 +54,7 @@ public class AvroTypeUtils
                     typeFromAvro(unwrapNullableUnion(schema).orElseThrow(() -> new UnsupportedOperationException("Unable to make Trino Type from Avro Union: %s".formatted(schema))), enclosingRecords);
             case FIXED -> VarbinaryType.VARBINARY;
             case STRING, BYTES -> VarcharType.VARCHAR;
-            case INT -> IntegerType.INTEGER;
-            case LONG -> BigintType.BIGINT;
+            case INT, LONG -> IntegerType.INTEGER;
             case FLOAT -> RealType.REAL;
             case DOUBLE -> DoubleType.DOUBLE;
             case BOOLEAN -> BooleanType.BOOLEAN;
