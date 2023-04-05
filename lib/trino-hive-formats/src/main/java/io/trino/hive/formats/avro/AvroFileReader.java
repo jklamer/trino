@@ -2,13 +2,10 @@ package io.trino.hive.formats.avro;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import io.trino.filesystem.SeekableInputStream;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.hive.formats.DataSeekableInputStream;
 import io.trino.spi.type.Type;
-import org.apache.avro.file.DataFileReader;
-import org.apache.avro.file.SeekableInput;
-import org.apache.avro.generic.GenericDatumReader;
-import org.apache.avro.generic.GenericRecord;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -29,6 +26,7 @@ public class AvroFileReader
     private final DataSeekableInputStream input;
     private final List<String> columns;
     private final Map<String, Type> columnTypes;
+    private AvroFilePageIterator pageIterator;
 
     public AvroFileReader(
             TrinoInputFile inputFile,
@@ -50,15 +48,16 @@ public class AvroFileReader
         this.length = length;
         this.end = offset + length;
         verify(end <= fileSize, "offset plus length is greater than data size");
-        this.input = new DataSeekableInputStream(inputFile.newInput().inputStream(), length);
-        this.input.seek(offset);
-        DataFileReader<GenericRecord> recordReader = new DataFileReader<GenericRecord>((SeekableInput) input, new GenericDatumReader<>());
+        SeekableInputStream seekableInputStream = inputFile.newInput().inputStream();
+        seekableInputStream.seek(offset);
+        // TODO figure out how to make this seek and find only within range
+        this.input = new DataSeekableInputStream(null, length);
     }
 
     @Override
     public void close()
             throws IOException
     {
-
+        this.input.close();
     }
 }

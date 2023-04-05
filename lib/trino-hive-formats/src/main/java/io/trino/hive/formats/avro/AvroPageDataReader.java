@@ -1,8 +1,8 @@
 package io.trino.hive.formats.avro;
 
+import com.google.common.base.VerifyException;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
-import io.trino.hadoop.$internal.org.apache.commons.lang3.NotImplementedException;
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.block.BlockBuilder;
@@ -12,24 +12,24 @@ import io.trino.spi.type.Type;
 import org.apache.avro.AvroTypeException;
 import org.apache.avro.Resolver;
 import org.apache.avro.Schema;
-import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericDatumReader;
 import org.apache.avro.io.BinaryDecoder;
 import org.apache.avro.io.DatumReader;
 import org.apache.avro.io.Decoder;
 import org.apache.avro.io.DecoderFactory;
-import org.apache.avro.io.ResolvingDecoder;
-import org.apache.avro.io.parsing.Symbol;
+import org.apache.avro.io.Encoder;
+import org.apache.avro.io.EncoderFactory;
+import org.apache.avro.io.parsing.ResolvingGrammarGenerator;
+import org.apache.avro.util.internal.Accessor;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Consumer;
 import java.util.function.IntFunction;
 
 import static com.google.common.base.Preconditions.checkArgument;
@@ -47,23 +47,19 @@ import static java.util.Objects.requireNonNull;
 public class AvroPageDataReader
         implements DatumReader<Optional<Page>>
 {
-    private Schema readerSchema;
+    private final Schema readerSchema;
     private Schema writerSchema;
-    private final Type readerSchemaType;
-    private final BinaryDecoder binaryDecoder;
-    private ResolvingDecoder decoder;
-    private PageBuilder pageBuilder;
+    private final PageBuilder pageBuilder;
     private RowBlockBuildingDecoder rowBlockBuildingDecoder;
 
-    public AvroPageDataReader(Schema readerSchema, InputStream inputStream)
+    public AvroPageDataReader(Schema readerSchema)
             throws IOException
     {
         this.readerSchema = requireNonNull(readerSchema, "readerSchema is null");
         this.writerSchema = this.readerSchema;
-        this.readerSchemaType = typeFromAvro(this.readerSchema);
+        Type readerSchemaType = typeFromAvro(this.readerSchema);
         verify(readerSchemaType instanceof RowType, "Can only build pages when top level type is Row");
-        this.pageBuilder = new PageBuilder(this.readerSchemaType.getTypeParameters());
-        this.binaryDecoder = DecoderFactory.get().binaryDecoder(requireNonNull(inputStream, "inputStream is null"), null);
+        this.pageBuilder = new PageBuilder(readerSchemaType.getTypeParameters());
         initialize();
     }
 
@@ -72,14 +68,13 @@ public class AvroPageDataReader
     {
         verify(readerSchema.getType().equals(Schema.Type.RECORD), "Avro schema for page reader must be record");
         verify(writerSchema.getType().equals(Schema.Type.RECORD), "File Avro schema for page reader must be record");
-        this.decoder = DecoderFactory.get().resolvingDecoder(this.readerSchema, this.writerSchema, binaryDecoder);
         this.rowBlockBuildingDecoder = new RowBlockBuildingDecoder(writerSchema, readerSchema);
     }
 
     @Override
     public void setSchema(Schema schema)
     {
-        if (schema != null) {
+        if (schema != null && schema != writerSchema) {
             writerSchema = schema;
             try {
                 initialize();
@@ -91,22 +86,32 @@ public class AvroPageDataReader
     }
 
     @Override
-    public Optional<Page> read(Optional<Page> ignoredReuse, Decoder ignoredDecoder)
+    public Optional<Page> read(Optional<Page> ignoredReuse, Decoder decoder)
             throws IOException
     {
-        this.decoder.drain();
         Optional<Page> page = Optional.empty();
-        if(pageBuilder.isFull()) {
+        rowBlockBuildingDecoder.decodeIntoPageBuilder(decoder, pageBuilder);
+        if (pageBuilder.isFull()) {
             page = Optional.of(pageBuilder.build());
             pageBuilder.reset();
         }
         return page;
     }
 
+    public Optional<Page> flush()
+            throws IOException
+    {
+        if (!pageBuilder.isEmpty()) {
+            Optional<Page> lastPage =  Optional.of(pageBuilder.build());
+            pageBuilder.reset();
+            return lastPage;
+        }
+        return Optional.empty();
+    }
 
     private static abstract class BlockBuildingDecoder
     {
-        protected abstract void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder) throws IOException;
+        protected abstract void decodeIntoBlock(Decoder decoder, BlockBuilder builder) throws IOException;
     }
 
 
@@ -125,7 +130,7 @@ public class AvroPageDataReader
             this.schema = requireNonNull(schema, "schema is null");
         }
 
-        private void skip(ResolvingDecoder decoder)
+        private void skip(Decoder decoder)
                 throws IOException
         {
             GenericDatumReader.skip(schema, decoder);
@@ -151,7 +156,7 @@ public class AvroPageDataReader
             this.outputChannel = outputChannel;
         }
 
-        public void decode(ResolvingDecoder decoder, IntFunction<BlockBuilder> channelSelector)
+        public void decode(Decoder decoder, IntFunction<BlockBuilder> channelSelector)
                 throws IOException
         {
             delegate.decodeIntoBlock(decoder, channelSelector.apply(outputChannel));
@@ -167,17 +172,17 @@ public class AvroPageDataReader
     private static final class ConstantBlockAction
             implements RowBuildingAction
     {
-        private final Consumer<BlockBuilder> addConstantFunction;
+        private final IoConsumer<BlockBuilder> addConstantFunction;
         private final int outputChannel;
 
-        public ConstantBlockAction(Consumer<BlockBuilder> addConstantFunction, int outputChannel)
+        public ConstantBlockAction(IoConsumer<BlockBuilder> addConstantFunction, int outputChannel)
         {
             this.addConstantFunction = requireNonNull(addConstantFunction, "addConstantFunction is null");
             checkArgument(outputChannel >= 0, "outputChannel must be positive");
             this.outputChannel = outputChannel;
         }
 
-        public void addConstant(IntFunction<BlockBuilder> channelSelector)
+        public void addConstant(IntFunction<BlockBuilder> channelSelector) throws IOException
         {
             addConstantFunction.accept(channelSelector.apply(outputChannel));
         }
@@ -194,12 +199,13 @@ public class AvroPageDataReader
     {
         RowBuildingAction[] buildSteps;
 
-        private RowBlockBuildingDecoder(Schema writeSchema, Schema readSchema)
+        private RowBlockBuildingDecoder(Schema writeSchema, Schema readSchema) throws IOException
         {
             this(Resolver.resolve(writeSchema, readSchema));
         }
 
         private RowBlockBuildingDecoder(Resolver.Action action)
+                throws IOException
         {
             if (action instanceof Resolver.ErrorAction errorAction) {
                 throw new RuntimeException("Error in resolution of types for row building: " + errorAction.error);
@@ -224,10 +230,10 @@ public class AvroPageDataReader
                 for (; i < buildSteps.length; i++) {
                     // create constant block
                     Schema.Field readField = recordAdjust.readerOrder[readerFieldCount++];
-                    buildSteps[i] = new ConstantBlockAction(null, readField.pos()); // TODO implement constants
+                    buildSteps[i] = new ConstantBlockAction(getDefaultBlockBuilder(readField), readField.pos());
                 }
 
-                verify(Arrays.stream(buildSteps).mapToInt(RowBuildingAction::getOutputChannel).filter(a -> a >= 0).distinct().sum() == (recordAdjust.reader.getFields().size() * (recordAdjust.reader.getFields().size() + 1) / 2),
+                verify(Arrays.stream(buildSteps).mapToInt(RowBuildingAction::getOutputChannel).filter(a -> a >= 0).distinct().sum() == (recordAdjust.reader.getFields().size() * (recordAdjust.reader.getFields().size() - 1) / 2),
                         "Every channel in output block builder must be accounted for");
                 verify(Arrays.stream(buildSteps).mapToInt(RowBuildingAction::getOutputChannel).filter(a -> a >= 0).distinct().count() == (long) recordAdjust.reader.getFields().size(), "Every channel in output block builder must be accounted for");
             }
@@ -237,7 +243,7 @@ public class AvroPageDataReader
         }
 
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             SingleRowBlockWriter currentBuilder = (SingleRowBlockWriter) builder.beginBlockEntry();
@@ -245,13 +251,13 @@ public class AvroPageDataReader
             builder.closeEntry();
         }
 
-        protected void decodeIntoPageBuilder(ResolvingDecoder decoder, PageBuilder builder) throws IOException
+        protected void decodeIntoPageBuilder(Decoder decoder, PageBuilder builder) throws IOException
         {
             builder.declarePosition();
             decodeIntoField(decoder, builder::getBlockBuilder);
         }
 
-        protected void decodeIntoField(ResolvingDecoder decoder, IntFunction<BlockBuilder> fieldBuilders)
+        protected void decodeIntoField(Decoder decoder, IntFunction<BlockBuilder> fieldBuilders)
                 throws IOException
         {
             for (int i = 0; i < buildSteps.length; i++) {
@@ -277,6 +283,7 @@ public class AvroPageDataReader
         private final BlockBuildingDecoder valueBlockBuildingDecoder;
 
         public MapBlockBuildingDecoder(Resolver.Container containerAction)
+                throws IOException
         {
             requireNonNull(containerAction, "containerAction is null");
             verify(containerAction.reader.getType() == Schema.Type.MAP, "Reader schema must be a map");
@@ -284,7 +291,7 @@ public class AvroPageDataReader
         }
 
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             BlockBuilder entryBuilder = builder.beginBlockEntry();
@@ -308,7 +315,7 @@ public class AvroPageDataReader
     {
         private final BlockBuildingDecoder elementBlockBuildingDecoder;
 
-        public ArrayBlockBuildingDecoder(Resolver.Container containerAction)
+        public ArrayBlockBuildingDecoder(Resolver.Container containerAction) throws IOException
         {
             requireNonNull(containerAction, "containerAction is null");
             verify(containerAction.reader.getType() == Schema.Type.ARRAY, "Reader schema must be a array");
@@ -316,7 +323,7 @@ public class AvroPageDataReader
         }
 
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             BlockBuilder elementBuilder = builder.beginBlockEntry();
@@ -336,7 +343,7 @@ public class AvroPageDataReader
     private static class IntBlockBuildingDecoder extends BlockBuildingDecoder
     {
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             INTEGER.writeLong(builder, decoder.readInt());
@@ -359,7 +366,7 @@ public class AvroPageDataReader
         }
 
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             INTEGER.writeLong(builder, extractLong.apply(decoder));
@@ -383,7 +390,7 @@ public class AvroPageDataReader
         }
 
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             REAL.writeLong(builder, floatToRawIntBits(extractFloat.apply(decoder)));
@@ -406,7 +413,7 @@ public class AvroPageDataReader
         }
 
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             DOUBLE.writeDouble(builder, extractDouble.apply(decoder));
@@ -416,7 +423,7 @@ public class AvroPageDataReader
     private static class BooleanBlockBuildingDecoder extends BlockBuildingDecoder
     {
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             BOOLEAN.writeBoolean(builder, decoder.readBoolean());
@@ -426,7 +433,7 @@ public class AvroPageDataReader
     private static class NullBlockBuildingDecoder extends BlockBuildingDecoder
     {
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             decoder.readNull();
@@ -446,7 +453,7 @@ public class AvroPageDataReader
         }
 
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             byte[] slice = new byte[expectedSize];
@@ -472,7 +479,7 @@ public class AvroPageDataReader
         }
 
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             VARBINARY.writeSlice(builder, extractBytes.apply(decoder));
@@ -496,7 +503,7 @@ public class AvroPageDataReader
         }
 
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             VARCHAR.writeString(builder, extractString.apply(decoder));
@@ -525,14 +532,38 @@ public class AvroPageDataReader
         }
 
         @Override
-        protected void decodeIntoBlock(ResolvingDecoder decoder, BlockBuilder builder)
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
                 throws IOException
         {
             VARCHAR.writeString(builder, symbols[decoder.readEnum()]);
         }
     }
 
-    private static BlockBuildingDecoder createBlockBuildingDecoderForAction(Resolver.Action action)
+    private static class WriterUnionBlockBuildingDecoder
+            extends BlockBuildingDecoder
+    {
+        private final BlockBuildingDecoder[] blockBuildingDecoders;
+
+        public WriterUnionBlockBuildingDecoder(Resolver.WriterUnion writerUnion)
+                throws IOException
+        {
+            blockBuildingDecoders = new BlockBuildingDecoder[writerUnion.actions.length];
+            for (int i = 0; i < writerUnion.actions.length; i++) {
+                blockBuildingDecoders[i] = createBlockBuildingDecoderForAction(writerUnion.actions[i]);
+            }
+        }
+
+        @Override
+        protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
+                throws IOException
+        {
+            int writeIndex = decoder.readIndex();
+            blockBuildingDecoders[writeIndex].decodeIntoBlock(decoder, builder);
+        }
+    }
+
+
+    private static BlockBuildingDecoder createBlockBuildingDecoderForAction(Resolver.Action action) throws IOException
     {
         return switch (action.type) {
             case CONTAINER -> switch (action.reader.getType()) {
@@ -567,12 +598,10 @@ public class AvroPageDataReader
                 case BOOLEAN, NULL, RECORD, ENUM, ARRAY, MAP, UNION, FIXED, INT ->
                         throw new AvroTypeException("Promotion action not allowed for reader schema type " + action.reader.getType());
             };
-            case WRITER_UNION -> throw new NotImplementedException("hey");
-            // return createUnionReader((Resolver.WriterUnion) action);
-            case READER_UNION -> throw new NotImplementedException("hey");
-//                return getReaderFor(((Resolver.ReaderUnion) action).actualAction, null);
+            case WRITER_UNION -> new WriterUnionBlockBuildingDecoder((Resolver.WriterUnion) action);
+            case READER_UNION -> createBlockBuildingDecoderForAction(((Resolver.ReaderUnion) action).actualAction);
             case ERROR -> throw new AvroTypeException("Resolution action returned with error " + action.toString());
-            case SKIP -> throw new AvroTypeException("Skips filtered by row step");
+            case SKIP -> throw new VerifyException("Skips filtered by row step");
         };
     }
 
@@ -644,38 +673,28 @@ public class AvroPageDataReader
         double apply(A a) throws IOException;
     }
 
-    private static Consumer<BlockBuilder> getDefaultBlockBuilder(Schema.Field field)
+    @FunctionalInterface
+    private interface IoConsumer<A>
     {
-        Object defaultValue = GenericData.get().getDefaultValue(field);
-        switch (field.schema().getType()) {
-            case RECORD -> {
-            }
-            case ENUM -> {
-            }
-            case ARRAY -> {
-            }
-            case MAP -> {
-            }
-            case UNION -> {
-            }
-            case FIXED -> {
-            }
-            case STRING -> {
-            }
-            case BYTES -> {
-            }
-            case INT -> {
-            }
-            case LONG -> {
-            }
-            case FLOAT -> {
-            }
-            case DOUBLE -> {
-            }
-            case BOOLEAN -> {
-            }
-            case NULL -> {
-            }
-        }
+        void accept(A a) throws IOException;
+    }
+
+    private static IoConsumer<BlockBuilder> getDefaultBlockBuilder(Schema.Field field)
+            throws IOException
+    {
+        BlockBuildingDecoder buildingDecoder = createBlockBuildingDecoderForAction(Resolver.resolve(field.schema(), field.schema()));
+        byte[] defaultBytes = getDefaultByes(field);
+        BinaryDecoder reuse = DecoderFactory.get().binaryDecoder(defaultBytes, null);
+        return blockBuilder -> buildingDecoder.decodeIntoBlock(DecoderFactory.get().binaryDecoder(defaultBytes, reuse), blockBuilder);
+    }
+
+    private static byte[] getDefaultByes(Schema.Field field)
+            throws IOException
+    {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Encoder e = EncoderFactory.get().binaryEncoder(out, null);
+        ResolvingGrammarGenerator.encode(e, field.schema(), Accessor.defaultValue(field));
+        e.flush();
+        return out.toByteArray();
     }
 }
