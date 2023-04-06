@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static io.trino.block.BlockAssertions.assertBlockEquals;
 import static io.trino.block.BlockAssertions.createStringsBlock;
@@ -72,7 +73,7 @@ public class TestAvroPageDataReaderWithoutConversions
                 .noDefault()
                 .endRecord();
 
-        int count = 10000;
+        int count = ThreadLocalRandom.current().nextInt(10000, 100000);
         try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, schema))) {
             Iterator<Page> pageIterator = new AvroFilePageIterator(schema, input);
             int totalRecords = 0;
@@ -96,7 +97,7 @@ public class TestAvroPageDataReaderWithoutConversions
         fieldAssembler.name("skippedField2").type().booleanType();
         Schema writeSchema = fieldAssembler.endRecord();
 
-        int count = 10000;
+        int count = ThreadLocalRandom.current().nextInt(10000, 100000);
         try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, writeSchema))) {
             Iterator<Page> pageIterator = new AvroFilePageIterator(SIMPLE_RECORD_SCHEMA, input);
             int totalRecords = 0;
@@ -120,7 +121,7 @@ public class TestAvroPageDataReaderWithoutConversions
         fieldAssembler.name("defaultedField2").type().booleanType().booleanDefault(true);
         Schema readerSchema = fieldAssembler.endRecord();
 
-        int count = 10000;
+        int count = ThreadLocalRandom.current().nextInt(10000, 100000);
         try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, SIMPLE_RECORD_SCHEMA))) {
             Iterator<Page> pageIterator = new AvroFilePageIterator(readerSchema, input);
             int totalRecords = 0;
@@ -152,7 +153,7 @@ public class TestAvroPageDataReaderWithoutConversions
         }
         Schema writerSchema = fieldAssembler.endRecord();
 
-        int count = 10000;
+        int count = ThreadLocalRandom.current().nextInt(10000, 100000);
         try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, writerSchema))) {
             Iterator<Page> pageIterator = new AvroFilePageIterator(SIMPLE_RECORD_SCHEMA, input);
             int totalRecords = 0;

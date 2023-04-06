@@ -1,7 +1,5 @@
 package io.trino.hive.formats.avro;
 
-import com.google.common.base.VerifyException;
-import io.airlift.concurrent.ThreadLocalCache;
 import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.BigintType;
 import io.trino.spi.type.BooleanType;
@@ -14,7 +12,6 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.TypeOperators;
 import io.trino.spi.type.VarbinaryType;
 import io.trino.spi.type.VarcharType;
-import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 
 import java.util.HashSet;
@@ -27,16 +24,16 @@ import static java.util.function.Predicate.not;
 
 public class AvroTypeUtils
 {
-    public static Type typeFromAvro(final Schema schema)
+    public static Type typeFromAvro(Schema schema, AvroTypeManager avroTypeManager)
     {
-        return typeFromAvro(schema, new HashSet<>());
+        return typeFromAvro(schema, avroTypeManager, new HashSet<>());
     }
 
-    private static Type typeFromAvro(final Schema schema, Set<Schema> enclosingRecords)
+    private static Type typeFromAvro(final Schema schema, AvroTypeManager avroTypeManager, Set<Schema> enclosingRecords)
     {
-        return switch (schema.getType()) {
-            case RECORD ->
-            {
+        Optional<Type> customType = avroTypeManager.typeForSchema(schema);
+        return customType.orElseGet(() -> switch (schema.getType()) {
+            case RECORD -> {
                 if (!enclosingRecords.add(schema)) {
                     throw new UnsupportedOperationException("Unable to represent recursive avro schemas in Trino Type form");
                 }
@@ -44,22 +41,23 @@ public class AvroTypeUtils
                         .stream()
                         .map(field ->
                         {
-                            return new RowType.Field(Optional.of(field.name()), typeFromAvro(field.schema(), new HashSet<>(enclosingRecords)));
+                            return new RowType.Field(Optional.of(field.name()), typeFromAvro(field.schema(), avroTypeManager, new HashSet<>(enclosingRecords)));
                         }).collect(toImmutableList()));
             }
             case ENUM -> VarcharType.VARCHAR;
-            case ARRAY -> new ArrayType(typeFromAvro(schema.getElementType(), enclosingRecords));
-            case MAP -> new MapType(VarcharType.VARCHAR, typeFromAvro(schema.getValueType(), enclosingRecords), new TypeOperators());
+            case ARRAY -> new ArrayType(typeFromAvro(schema.getElementType(), avroTypeManager, enclosingRecords));
+            case MAP -> new MapType(VarcharType.VARCHAR, typeFromAvro(schema.getValueType(), avroTypeManager, enclosingRecords), new TypeOperators());
             case UNION ->
-                    typeFromAvro(unwrapNullableUnion(schema).orElseThrow(() -> new UnsupportedOperationException("Unable to make Trino Type from Avro Union: %s".formatted(schema))), enclosingRecords);
+                    typeFromAvro(unwrapNullableUnion(schema).orElseThrow(() -> new UnsupportedOperationException("Unable to make Trino Type from Avro Union: %s".formatted(schema))), avroTypeManager, enclosingRecords);
             case FIXED -> VarbinaryType.VARBINARY;
             case STRING, BYTES -> VarcharType.VARCHAR;
-            case INT, LONG -> IntegerType.INTEGER;
+            case INT -> IntegerType.INTEGER;
+            case LONG -> BigintType.BIGINT;
             case FLOAT -> RealType.REAL;
             case DOUBLE -> DoubleType.DOUBLE;
             case BOOLEAN -> BooleanType.BOOLEAN;
             case NULL -> throw new UnsupportedOperationException("No null column type support");
-        };
+        });
     }
 
     private static Optional<Schema> unwrapNullableUnion(Schema schema)

@@ -6,6 +6,8 @@ import io.trino.filesystem.SeekableInputStream;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.hive.formats.DataSeekableInputStream;
 import io.trino.spi.type.Type;
+import org.apache.avro.Schema;
+import org.apache.avro.file.SeekableInput;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -24,23 +26,20 @@ public class AvroFileReader
     private final long length;
     private final long end;
     private final DataSeekableInputStream input;
-    private final List<String> columns;
-    private final Map<String, Type> columnTypes;
     private AvroFilePageIterator pageIterator;
 
     public AvroFileReader(
             TrinoInputFile inputFile,
-            List<String> columns,
-            Map<String, Type> columnTypes,
+            Schema schema,
+            AvroTypeManager avroTypeManager,
             long offset,
             long length)
             throws IOException
     {
         requireNonNull(inputFile, "inputFile is null");
+        requireNonNull(schema, "schema is null");
         this.location = inputFile.location();
         this.fileSize = inputFile.length();
-        this.columns = ImmutableList.copyOf(requireNonNull(columns, "columns is null"));
-        this.columnTypes = ImmutableMap.copyOf(requireNonNull(columnTypes, "columnTypes is null"));
 
         verify(offset >= 0, "offset is negative");
         verify(offset < inputFile.length(), "offset is greater than data size");
@@ -48,10 +47,59 @@ public class AvroFileReader
         this.length = length;
         this.end = offset + length;
         verify(end <= fileSize, "offset plus length is greater than data size");
-        SeekableInputStream seekableInputStream = inputFile.newInput().inputStream();
-        seekableInputStream.seek(offset);
-        // TODO figure out how to make this seek and find only within range
-        this.input = new DataSeekableInputStream(null, length);
+        input = new DataSeekableInputStream(inputFile.newInput().inputStream());
+        input.seek(offset);
+        this.pageIterator = new AvroFilePageIterator(schema, avroTypeManager, new SeekableInput() {
+            @Override
+            public void seek(long p)
+                    throws IOException
+            {
+                input.seek(p);
+            }
+
+            @Override
+            public long tell()
+                    throws IOException
+            {
+                return input.getPos();
+            }
+
+            @Override
+            public long length()
+                    throws IOException
+            {
+                return length;
+            }
+
+            @Override
+            public int read(byte[] b, int off, int len)
+                    throws IOException
+            {
+                return input.read(b, off, len);
+            }
+
+            @Override
+            public void close()
+                    throws IOException
+            {
+                input.close();
+            }
+        });
+    }
+
+    public AvroFilePageIterator getPageIterator()
+    {
+        return pageIterator;
+    }
+
+    public long getCompletedBytes()
+    {
+        return input.getReadBytes();
+    }
+
+    public long getReadTimeNanos()
+    {
+        return input.getReadTimeNanos();
     }
 
     @Override

@@ -142,7 +142,7 @@ public class RcFileReader
         this.end = offset + length;
         verify(end <= fileSize, "offset plus length is greater than data size");
 
-        this.input = new DataSeekableInputStream(inputFile.newInput().inputStream(), length);
+        this.input = new DataSeekableInputStream(inputFile.newInput().inputStream());
 
         // read header
         Slice magic = input.readSlice(RCFILE_MAGIC.length());

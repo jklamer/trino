@@ -14,6 +14,7 @@
 package io.trino.spi.type;
 
 import io.trino.spi.TrinoException;
+import io.trino.spi.block.BlockBuilder;
 
 import java.util.List;
 

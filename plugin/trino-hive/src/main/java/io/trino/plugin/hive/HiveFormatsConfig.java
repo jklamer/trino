@@ -18,8 +18,8 @@ import io.airlift.configuration.ConfigDescription;
 
 public class HiveFormatsConfig
 {
-    private boolean avroFileNativeReaderEnabled = false;
-    private boolean avroFileNativeWriterEnabled = false;
+    private boolean avroFileNativeReaderEnabled = true;
+    private boolean avroFileNativeWriterEnabled = true;
     private boolean csvNativeReaderEnabled = true;
     private boolean csvNativeWriterEnabled = true;
     private boolean jsonNativeReaderEnabled = true;

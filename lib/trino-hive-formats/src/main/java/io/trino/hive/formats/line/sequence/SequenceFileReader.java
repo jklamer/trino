@@ -93,7 +93,7 @@ public final class SequenceFileReader
             long fileSize = inputFile.length();
             verify(end <= fileSize, "offset plus length is greater than data size");
 
-            this.input = new DataSeekableInputStream(inputFile.newInput().inputStream(), length);
+            this.input = new DataSeekableInputStream(inputFile.newInput().inputStream());
             closer.register(input);
 
             // read header

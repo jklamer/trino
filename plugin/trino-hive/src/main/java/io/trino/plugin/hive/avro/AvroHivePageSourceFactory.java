@@ -25,6 +25,7 @@ import io.trino.hdfs.HdfsEnvironment;
 import io.trino.plugin.hive.AcidInfo;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.HiveColumnHandle;
+import io.trino.plugin.hive.HiveConfig;
 import io.trino.plugin.hive.HivePageSourceFactory;
 import io.trino.plugin.hive.MonitoredTrinoInputFile;
 import io.trino.plugin.hive.ReaderColumns;
@@ -35,11 +36,13 @@ import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.EmptyPageSource;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.TypeManager;
+import org.apache.avro.Schema;
 import org.apache.commons.lang.NotImplementedException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Optional;
@@ -110,6 +113,14 @@ public class AvroHivePageSourceFactory
         TrinoFileSystem trinoFileSystem = new HdfsFileSystemFactory(hdfsEnvironment).create(session.getIdentity());
         TrinoInputFile inputFile = new MonitoredTrinoInputFile(stats, trinoFileSystem.newInputFile(path.toString()));
 
+        Schema avroSchema;
+        try {
+            avroSchema = AvroHiveFileUtils.determineSchemaOrThrowException(trinoFileSystem, configuration, schema);
+        }
+        catch (IOException e) {
+            throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, "Unable to load or parse schema", e);
+        }
+
         try {
             length = min(inputFile.length() - start, length);
             if (!inputFile.exists()) {
@@ -138,9 +149,11 @@ public class AvroHivePageSourceFactory
             return Optional.of(noProjectionAdaptation(new EmptyPageSource()));
         }
 
-
-
-
-        throw new NotImplementedException();
+        try {
+            return Optional.of(new ReaderPageSource(new AvroHivePageSource(inputFile, avroSchema, new HiveAvroTypeManager(), start, length), readerProjections));
+        }
+        catch (IOException e) {
+            throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, e);
+        }
     }
 }
