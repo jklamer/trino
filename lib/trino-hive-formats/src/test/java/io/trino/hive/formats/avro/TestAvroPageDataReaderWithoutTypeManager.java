@@ -1,11 +1,13 @@
 package io.trino.hive.formats.avro;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import io.trino.spi.Page;
 import io.trino.spi.block.ByteArrayBlock;
 import io.trino.spi.block.IntArrayBlock;
 import io.trino.spi.block.MapBlock;
+import io.trino.spi.type.Type;
 import org.apache.avro.Schema;
 import org.apache.avro.SchemaBuilder;
 import org.apache.avro.file.DataFileWriter;
@@ -18,8 +20,11 @@ import org.testng.annotations.Test;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 import static io.trino.block.BlockAssertions.assertBlockEquals;
 import static io.trino.block.BlockAssertions.createStringsBlock;
@@ -27,7 +32,7 @@ import static io.trino.spi.type.VarcharType.VARCHAR;
 import static io.trino.util.StructuralTestUtil.mapType;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 
-public class TestAvroPageDataReaderWithoutConversions
+public class TestAvroPageDataReaderWithoutTypeManager
 {
     private static final Schema SIMPLE_RECORD_SCHEMA = SchemaBuilder.record("simpleRecord")
             .fields()
@@ -39,43 +44,43 @@ public class TestAvroPageDataReaderWithoutConversions
             .type().stringType().noDefault()
             .endRecord();
 
+    private static final Schema ALL_TYPE_RECORD_SCHEMA = SchemaBuilder.builder()
+            .record("all")
+            .fields()
+            .name("aBoolean")
+            .type().booleanType().noDefault()
+            .name("aInt")
+            .type().intType().noDefault()
+            .name("aLong")
+            .type().intType().noDefault()
+            .name("aFloat")
+            .type().floatType().noDefault()
+            .name("aDouble")
+            .type().doubleType().noDefault()
+            .name("aString")
+            .type().stringType().noDefault()
+            .name("aBytes")
+            .type().bytesType().noDefault()
+            .name("aFixed")
+            .type().fixed("myFixedType").size(16).noDefault()
+            .name("anArray")
+            .type().array().items().intType().noDefault()
+            .name("aMap")
+            .type().map().values().intType().noDefault()
+            .name("anEnum")
+            .type().enumeration("myEnumType").symbols("A", "B", "C").noDefault()
+            .name("aRecord")
+            .type(SIMPLE_RECORD_SCHEMA)
+            .noDefault()
+            .endRecord();
+
     @Test
     public void testAllTypesSimple()
             throws IOException, InterruptedException
     {
-        Schema schema = SchemaBuilder.builder()
-                .record("all")
-                .fields()
-                .name("aBoolean")
-                .type().booleanType().noDefault()
-                .name("aInt")
-                .type().intType().noDefault()
-                .name("aLong")
-                .type().intType().noDefault()
-                .name("aFloat")
-                .type().floatType().noDefault()
-                .name("aDouble")
-                .type().doubleType().noDefault()
-                .name("aString")
-                .type().stringType().noDefault()
-                .name("aBytes")
-                .type().bytesType().noDefault()
-                .name("aFixed")
-                .type().fixed("myFixedType").size(16).noDefault()
-                .name("anArray")
-                .type().array().items().intType().noDefault()
-                .name("aMap")
-                .type().map().values().intType().noDefault()
-                .name("anEnum")
-                .type().enumeration("myEnumType").symbols("A", "B", "C").noDefault()
-                .name("aRecord")
-                .type(SIMPLE_RECORD_SCHEMA)
-                .noDefault()
-                .endRecord();
-
         int count = ThreadLocalRandom.current().nextInt(10000, 100000);
-        try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, schema))) {
-            Iterator<Page> pageIterator = new AvroFilePageIterator(schema, input);
+        try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, ALL_TYPE_RECORD_SCHEMA))) {
+            Iterator<Page> pageIterator = new AvroFilePageIterator(ALL_TYPE_RECORD_SCHEMA, input);
             int totalRecords = 0;
             while (pageIterator.hasNext()) {
                 Page p = pageIterator.next();
@@ -166,7 +171,64 @@ public class TestAvroPageDataReaderWithoutConversions
         }
     }
 
-    private static File createWrittenFileWithSchema(int count, Schema schema)
+    @Test
+    public void testSchemaWithNull()
+            throws IOException
+    {
+        SchemaBuilder.FieldAssembler<Schema> fieldAssembler = SchemaBuilder.builder().record("myRecord").fields();
+        for (Schema.Field field : ALL_TYPE_RECORD_SCHEMA.getFields()) {
+            fieldAssembler = fieldAssembler.name(field.name()).type(Schema.createUnion(Schema.create(Schema.Type.NULL), field.schema())).noDefault();
+        }
+        Schema nullableSchema = fieldAssembler.endRecord();
+
+        int count = ThreadLocalRandom.current().nextInt(10000, 100000);
+        try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, nullableSchema))) {
+            Iterator<Page> pageIterator = new AvroFilePageIterator(nullableSchema, input);
+            int totalRecords = 0;
+            while (pageIterator.hasNext()) {
+                Page p = pageIterator.next();
+                totalRecords += p.getPositionCount();
+            }
+            assertThat(totalRecords).isEqualTo(count);
+        }
+    }
+
+    @Test
+    public void testPromotions() throws IOException
+    {
+        SchemaBuilder.FieldAssembler<Schema> writeSchemaBuilder = SchemaBuilder.builder().record("writeRecord").fields();
+        SchemaBuilder.FieldAssembler<Schema> readSchemaBuilder = SchemaBuilder.builder().record("readRecord").fields();
+
+        AtomicInteger fieldNum = new AtomicInteger(0);
+        for (Schema.Type readType : Schema.Type.values()) {
+            List<Schema.Type> promotesFrom = switch (readType) {
+                case STRING -> ImmutableList.of(Schema.Type.BYTES);
+                case BYTES -> ImmutableList.of(Schema.Type.STRING);
+                case LONG -> ImmutableList.of(Schema.Type.INT);
+                case FLOAT -> ImmutableList.of(Schema.Type.INT, Schema.Type.LONG);
+                case DOUBLE -> ImmutableList.of(Schema.Type.INT, Schema.Type.LONG, Schema.Type.FLOAT);
+                case RECORD, ENUM, ARRAY, MAP, UNION, FIXED, INT, BOOLEAN, NULL -> ImmutableList.of();
+            };
+            for(Schema.Type writeType: promotesFrom) {
+                String fieldName = "field" + fieldNum.getAndIncrement();
+                writeSchemaBuilder = writeSchemaBuilder.name(fieldName).type(Schema.create(writeType)).noDefault();
+                readSchemaBuilder = readSchemaBuilder.name(fieldName).type(Schema.create(readType)).noDefault();
+            }
+        }
+
+        int count = ThreadLocalRandom.current().nextInt(10000, 100000);
+        try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, writeSchemaBuilder.endRecord()))) {
+            Iterator<Page> pageIterator = new AvroFilePageIterator(readSchemaBuilder.endRecord(), input);
+            int totalRecords = 0;
+            while (pageIterator.hasNext()) {
+                Page p = pageIterator.next();
+                totalRecords += p.getPositionCount();
+            }
+            assertThat(totalRecords).isEqualTo(count);
+        }
+    }
+
+    protected static File createWrittenFileWithSchema(int count, Schema schema)
             throws IOException
     {
         Iterator<Object> randomData = new RandomData(schema, count).iterator();
@@ -177,6 +239,7 @@ public class TestAvroPageDataReaderWithoutConversions
                 fileWriter.append((GenericRecord) randomData.next());
             }
         }
+        tempFile.deleteOnExit();
         return tempFile;
     }
 }

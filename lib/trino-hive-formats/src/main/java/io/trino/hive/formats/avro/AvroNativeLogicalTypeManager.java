@@ -14,14 +14,19 @@ import io.trino.spi.type.UuidType;
 import org.apache.avro.LogicalType;
 import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
+import org.apache.avro.SchemaBuilder;
 import org.apache.avro.generic.GenericFixed;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
+import static io.trino.spi.type.Decimals.MAX_SHORT_PRECISION;
 import static io.trino.spi.type.UuidType.javaUuidToTrinoUuid;
 import static org.apache.avro.LogicalTypes.fromSchemaIgnoreInvalid;
 
@@ -33,6 +38,14 @@ public class AvroNativeLogicalTypeManager
 {
 
     private static final Logger log = Logger.get(AvroNativeLogicalTypeManager.class);
+
+    public static final Schema TIMESTAMP_MILLI_SCHEMA;
+    public static final Schema TIMESTAMP_MICRO_SCHEMA;
+    public static final Schema DATE_SCHEMA;
+    public static final Schema TIME_MILLIS_SCHEMA;
+    public static final Schema TIME_MICROS_SCHEMA;
+    public static final Schema UUID_SCHEMA;
+
     // Copied from org.apache.avro.LogicalTypes
     private static final String DECIMAL = "decimal";
     private static final String UUID = "uuid";
@@ -43,6 +56,22 @@ public class AvroNativeLogicalTypeManager
     private static final String TIMESTAMP_MICROS = "timestamp-micros";
     private static final String LOCAL_TIMESTAMP_MILLIS = "local-timestamp-millis";
     private static final String LOCAL_TIMESTAMP_MICROS = "local-timestamp-micros";
+
+
+    static {
+        TIMESTAMP_MILLI_SCHEMA = SchemaBuilder.builder().longType();
+        LogicalTypes.timestampMillis().addToSchema(TIMESTAMP_MILLI_SCHEMA);
+        TIMESTAMP_MICRO_SCHEMA = SchemaBuilder.builder().longType();
+        LogicalTypes.timestampMicros().addToSchema(TIMESTAMP_MICRO_SCHEMA);
+        DATE_SCHEMA = Schema.create(Schema.Type.INT);
+        LogicalTypes.date().addToSchema(DATE_SCHEMA);
+        TIME_MILLIS_SCHEMA = Schema.create(Schema.Type.INT);
+        LogicalTypes.timeMillis().addToSchema(TIME_MILLIS_SCHEMA);
+        TIME_MICROS_SCHEMA = Schema.create(Schema.Type.LONG);
+        LogicalTypes.timeMicros().addToSchema(TIME_MICROS_SCHEMA);
+        UUID_SCHEMA = Schema.create(Schema.Type.STRING);
+        LogicalTypes.uuid().addToSchema(UUID_SCHEMA);
+    }
 
     @Override
     public void configure(Map<String, byte[]> fileMetaData)
@@ -82,18 +111,18 @@ public class AvroNativeLogicalTypeManager
                 switch (logicalType.getName()) {
                     case TIMESTAMP_MILLIS -> switch (schema.getType()) {
                         case LONG -> {
-                            yield (builder, longObj) -> {
-                                Long l = (Long) longObj;
-                                TimestampType.TIMESTAMP_MILLIS.writeObject(builder, new LongTimestamp(l * 1000, 0));
+                            yield (builder, obj) -> {
+                                Long l = (Long) obj;
+                                TimestampType.TIMESTAMP_MILLIS.writeLong(builder, l * 1000);
                             };
                         }
                         default -> throw new IllegalStateException("Unreachable unfiltered logical type");
                     };
                     case TIMESTAMP_MICROS -> switch (schema.getType()) {
                         case LONG -> {
-                            yield (builder, longObj) -> {
-                                Long l = (Long) longObj;
-                                TimestampType.TIMESTAMP_MILLIS.writeObject(builder, new LongTimestamp(l, 0));
+                            yield (builder, obj) -> {
+                                Long l = (Long) obj;
+                                TimestampType.TIMESTAMP_MICROS.writeLong(builder, l);
                             };
                         }
                         default -> throw new IllegalStateException("Unreachable unfiltered logical type");
@@ -103,6 +132,7 @@ public class AvroNativeLogicalTypeManager
                         DecimalType decimalType = DecimalType.createDecimalType(decimal.getPrecision(), decimal.getScale());
                         Function<Object, byte[]> byteExtract = switch (schema.getType()) {
                             case BYTES -> {
+                                // This is only safe because we don't reuse byte buffer objects which means each gets sized exactly for the bytes contained
                                 yield (obj) -> ((ByteBuffer) obj).array();
                             }
                             case FIXED -> {
@@ -118,8 +148,7 @@ public class AvroNativeLogicalTypeManager
                             }
                             case io.trino.spi.type.ShortDecimalType shortDecimalType -> {
                                 yield (builder, obj) -> {
-                                    // inspired by io.trino.operator.scalar.VarbinaryFunctions.fromBigEndian64
-                                    shortDecimalType.writeLong(builder, Long.reverseBytes(Slices.wrappedBuffer(byteExtract.apply(obj)).getLong(0)));
+                                    shortDecimalType.writeLong(builder, fromBigEndian(byteExtract.apply(obj)));
                                 };
                             }
                         };
@@ -137,16 +166,17 @@ public class AvroNativeLogicalTypeManager
                         case INT -> {
                             yield (builder, obj) -> {
                                 Integer i = (Integer) obj;
-                                TimeType.TIME_MILLIS.writeLong(builder, i.longValue());
+                                TimeType.TIME_MILLIS.writeLong(builder, i.longValue() * 1_000_000_000);
                             };
                         }
                         default -> throw new IllegalStateException("Unreachable unfiltered logical type");
                     };
                     case TIME_MICROS -> switch (schema.getType()) {
-                        case INT -> {
+                        case LONG -> {
                             yield (builder, obj) -> {
-                                Integer i = (Integer) obj;
-                                TimeType.TIME_MICROS.writeLong(builder, i.longValue());
+                                Long i = (Long) obj;
+                                // convert to picos
+                                TimeType.TIME_MICROS.writeLong(builder, i * 1_000_000);
                             };
                         }
                         default -> throw new IllegalStateException("Unreachable unfiltered logical type");
@@ -174,10 +204,13 @@ public class AvroNativeLogicalTypeManager
         switch (typeName) {
             case TIMESTAMP_MILLIS, TIMESTAMP_MICROS, DECIMAL, DATE, TIME_MILLIS, TIME_MICROS, UUID:
                 logicalType = fromSchemaIgnoreInvalid(schema);
+                break;
             case LOCAL_TIMESTAMP_MICROS + LOCAL_TIMESTAMP_MILLIS:
                 log.warn("Logical type " + typeName + " not currently supported by by Trino");
+                break;
             default:
                 log.warn("Unrecognized logical type " + typeName);
+                break;
         }
         // make sure the type is valid before returning it
         if (logicalType != null) {
@@ -192,5 +225,39 @@ public class AvroNativeLogicalTypeManager
         else {
             return Optional.empty();
         }
+    }
+
+
+    private static final VarHandle BIG_ENDIAN_LONG_VIEW = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.BIG_ENDIAN);
+    /**
+     * Decode a long from the two's complement big-endian representation.
+     *
+     * @param bytes the two's complement big-endian encoding of the number. It must contain at least 1 byte.
+     *              It may contain more than 8 bytes if the leading bytes are not significant (either zeros or -1)
+     * @throws ArithmeticException if the bytes represent a number outside of the range [-2^63, 2^63 - 1]
+     */
+    // Styled from io.trino.spi.type.Int128.fromBigEndian
+    // TODO put this where?
+    public static long fromBigEndian(byte[] bytes)
+    {
+        if (bytes.length > 8) {
+            int offset = bytes.length - Long.BYTES;
+            long res = (long) BIG_ENDIAN_LONG_VIEW.get(bytes, offset);
+            long expectedLeadingBytes = res >> 63;
+            for (int i = 0; i < offset; i++) {
+                if (bytes[i] != expectedLeadingBytes) {
+                    throw new ArithmeticException("Overflow");
+                }
+            }
+            return res;
+        }
+        if (bytes.length == 8) {
+            return (long) BIG_ENDIAN_LONG_VIEW.get(bytes, 0);
+        }
+        long res = (bytes[0] >> 7);
+        for (int i = 0; i < bytes.length; i++) {
+            res = (res << 8) | (bytes[i] & 0xFF);
+        }
+        return res;
     }
 }

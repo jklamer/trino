@@ -16,7 +16,8 @@ public abstract class AvroTypeManager
 
     /**
      * Object provided by FasterReader's deserialization with no conversions.
-     * Object class determined by Avro's standard generic data process. For optional fields this can be null
+     * Object class determined by Avro's standard generic data process
+     * BlockBuilder provided by Type returned above for the schema
      */
     public abstract Optional<BiConsumer<BlockBuilder, Object>> buildingFunctionForSchema(Schema schema);
 }

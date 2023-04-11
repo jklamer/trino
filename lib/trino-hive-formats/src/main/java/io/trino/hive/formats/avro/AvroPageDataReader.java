@@ -658,7 +658,6 @@ public class AvroPageDataReader
     {
         return switch (writerSchema.getType()) {
             case INT -> Decoder::readInt;
-            case DOUBLE -> decoder -> (long) decoder.readDouble();
             default -> throw new AvroTypeException("Cannot promote type %s to long".formatted(writerSchema.getType()));
         };
     }
