@@ -16,7 +16,6 @@ package io.trino.hive.formats;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.filesystem.SeekableInputStream;
-import org.apache.avro.file.SeekableInput;
 import org.openjdk.jol.info.ClassLayout;
 
 import java.io.DataInput;

@@ -1,18 +1,25 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.trino.hive.formats.avro;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import io.trino.filesystem.SeekableInputStream;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.hive.formats.DataSeekableInputStream;
-import io.trino.spi.type.Type;
 import org.apache.avro.Schema;
 import org.apache.avro.file.SeekableInput;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.List;
-import java.util.Map;
 
 import static com.google.common.base.Verify.verify;
 import static java.util.Objects.requireNonNull;
@@ -20,7 +27,6 @@ import static java.util.Objects.requireNonNull;
 public class AvroFileReader
         implements Closeable
 {
-
     private final String location;
     private final long fileSize;
     private final long length;
@@ -49,7 +55,8 @@ public class AvroFileReader
         verify(end <= fileSize, "offset plus length is greater than data size");
         input = new DataSeekableInputStream(inputFile.newInput().inputStream());
         input.seek(offset);
-        this.pageIterator = new AvroFilePageIterator(schema, avroTypeManager, new SeekableInput() {
+        this.pageIterator = new AvroFilePageIterator(schema, avroTypeManager, new SeekableInput()
+        {
             @Override
             public void seek(long p)
                     throws IOException

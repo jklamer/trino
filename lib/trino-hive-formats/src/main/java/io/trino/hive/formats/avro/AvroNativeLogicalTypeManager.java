@@ -1,12 +1,23 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.trino.hive.formats.avro;
 
 import io.airlift.log.Logger;
-import io.airlift.slice.Slices;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.type.DateType;
 import io.trino.spi.type.DecimalType;
 import io.trino.spi.type.Int128;
-import io.trino.spi.type.LongTimestamp;
 import io.trino.spi.type.TimeType;
 import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.Type;
@@ -26,7 +37,6 @@ import java.util.Optional;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
-import static io.trino.spi.type.Decimals.MAX_SHORT_PRECISION;
 import static io.trino.spi.type.UuidType.javaUuidToTrinoUuid;
 import static org.apache.avro.LogicalTypes.fromSchemaIgnoreInvalid;
 
@@ -36,7 +46,6 @@ import static org.apache.avro.LogicalTypes.fromSchemaIgnoreInvalid;
 public class AvroNativeLogicalTypeManager
         extends AvroTypeManager
 {
-
     private static final Logger log = Logger.get(AvroNativeLogicalTypeManager.class);
 
     public static final Schema TIMESTAMP_MILLI_SCHEMA;
@@ -56,7 +65,6 @@ public class AvroNativeLogicalTypeManager
     private static final String TIMESTAMP_MICROS = "timestamp-micros";
     private static final String LOCAL_TIMESTAMP_MILLIS = "local-timestamp-millis";
     private static final String LOCAL_TIMESTAMP_MICROS = "local-timestamp-micros";
-
 
     static {
         TIMESTAMP_MILLI_SCHEMA = SchemaBuilder.builder().longType();
@@ -78,120 +86,109 @@ public class AvroNativeLogicalTypeManager
     {
     }
 
-    /**
-     * Heavily borrow from org.apache.avro.LogicalTypes#fromSchemaImpl(org.apache.avro.Schema, boolean)
-     *
-     * @param schema
-     * @return
-     */
+    // Heavily borrow from org.apache.avro.LogicalTypes#fromSchemaImpl(org.apache.avro.Schema, boolean)
     @Override
     public Optional<Type> typeForSchema(Schema schema)
     {
-        return validateAndProduceFromName(schema, logicalType ->
-                switch (logicalType.getName()) {
-                    case TIMESTAMP_MILLIS -> TimestampType.TIMESTAMP_MILLIS;
-                    case TIMESTAMP_MICROS -> TimestampType.TIMESTAMP_MICROS;
-                    case DECIMAL -> {
-                        LogicalTypes.Decimal decimal = (LogicalTypes.Decimal) logicalType;
-                        yield DecimalType.createDecimalType(decimal.getPrecision(), decimal.getScale());
-                    }
-                    case DATE -> DateType.DATE;
-                    case TIME_MILLIS -> TimeType.TIME_MILLIS;
-                    case TIME_MICROS -> TimeType.TIME_MICROS;
-                    case UUID -> UuidType.UUID;
-                    default -> throw new IllegalStateException("Unreachable unfilted logical type");
-                }
-        );
+        return validateAndProduceFromName(schema, logicalType -> switch (logicalType.getName()) {
+            case TIMESTAMP_MILLIS -> TimestampType.TIMESTAMP_MILLIS;
+            case TIMESTAMP_MICROS -> TimestampType.TIMESTAMP_MICROS;
+            case DECIMAL -> {
+                LogicalTypes.Decimal decimal = (LogicalTypes.Decimal) logicalType;
+                yield DecimalType.createDecimalType(decimal.getPrecision(), decimal.getScale());
+            }
+            case DATE -> DateType.DATE;
+            case TIME_MILLIS -> TimeType.TIME_MILLIS;
+            case TIME_MICROS -> TimeType.TIME_MICROS;
+            case UUID -> UuidType.UUID;
+            default -> throw new IllegalStateException("Unreachable unfilted logical type");
+        });
     }
 
     @Override
     public Optional<BiConsumer<BlockBuilder, Object>> buildingFunctionForSchema(Schema schema)
     {
-        return validateAndProduceFromName(schema, logicalType ->
-                switch (logicalType.getName()) {
-                    case TIMESTAMP_MILLIS -> switch (schema.getType()) {
-                        case LONG -> {
-                            yield (builder, obj) -> {
-                                Long l = (Long) obj;
-                                TimestampType.TIMESTAMP_MILLIS.writeLong(builder, l * 1000);
-                            };
-                        }
-                        default -> throw new IllegalStateException("Unreachable unfiltered logical type");
+        return validateAndProduceFromName(schema, logicalType -> switch (logicalType.getName()) {
+            case TIMESTAMP_MILLIS -> switch (schema.getType()) {
+                case LONG -> {
+                    yield (builder, obj) -> {
+                        Long l = (Long) obj;
+                        TimestampType.TIMESTAMP_MILLIS.writeLong(builder, l * 1000);
                     };
-                    case TIMESTAMP_MICROS -> switch (schema.getType()) {
-                        case LONG -> {
-                            yield (builder, obj) -> {
-                                Long l = (Long) obj;
-                                TimestampType.TIMESTAMP_MICROS.writeLong(builder, l);
-                            };
-                        }
-                        default -> throw new IllegalStateException("Unreachable unfiltered logical type");
-                    };
-                    case DECIMAL -> {
-                        LogicalTypes.Decimal decimal = (LogicalTypes.Decimal) logicalType;
-                        DecimalType decimalType = DecimalType.createDecimalType(decimal.getPrecision(), decimal.getScale());
-                        Function<Object, byte[]> byteExtract = switch (schema.getType()) {
-                            case BYTES -> {
-                                // This is only safe because we don't reuse byte buffer objects which means each gets sized exactly for the bytes contained
-                                yield (obj) -> ((ByteBuffer) obj).array();
-                            }
-                            case FIXED -> {
-                                yield (obj) -> ((GenericFixed) obj).bytes();
-                            }
-                            default -> throw new IllegalStateException("Unreachable unfiltered logical type");
-                        };
-                        yield switch (decimalType) {
-                            case io.trino.spi.type.LongDecimalType longDecimalType -> {
-                                yield (builder, obj) -> {
-                                    longDecimalType.writeObject(builder, Int128.fromBigEndian(byteExtract.apply(obj)));
-                                };
-                            }
-                            case io.trino.spi.type.ShortDecimalType shortDecimalType -> {
-                                yield (builder, obj) -> {
-                                    shortDecimalType.writeLong(builder, fromBigEndian(byteExtract.apply(obj)));
-                                };
-                            }
-                        };
-                    }
-                    case DATE -> switch (schema.getType()) {
-                        case INT -> {
-                            yield (builder, obj) -> {
-                                Integer i = (Integer) obj;
-                                DateType.DATE.writeLong(builder, i.longValue());
-                            };
-                        }
-                        default -> throw new IllegalStateException("Unreachable unfiltered logical type");
-                    };
-                    case TIME_MILLIS -> switch (schema.getType()) {
-                        case INT -> {
-                            yield (builder, obj) -> {
-                                Integer i = (Integer) obj;
-                                TimeType.TIME_MILLIS.writeLong(builder, i.longValue() * 1_000_000_000);
-                            };
-                        }
-                        default -> throw new IllegalStateException("Unreachable unfiltered logical type");
-                    };
-                    case TIME_MICROS -> switch (schema.getType()) {
-                        case LONG -> {
-                            yield (builder, obj) -> {
-                                Long i = (Long) obj;
-                                // convert to picos
-                                TimeType.TIME_MICROS.writeLong(builder, i * 1_000_000);
-                            };
-                        }
-                        default -> throw new IllegalStateException("Unreachable unfiltered logical type");
-                    };
-                    case UUID -> switch (schema.getType()) {
-                        case STRING -> {
-                            yield (builder, obj) -> {
-                                UuidType.UUID.writeSlice(builder, javaUuidToTrinoUuid(java.util.UUID.fromString(obj.toString())));
-                            };
-                        }
-                        default -> throw new IllegalStateException("Unreachable unfiltered logical type");
-                    };
-                    default -> throw new IllegalStateException("Unreachable unfiltered logical type");
                 }
-        );
+                default -> throw new IllegalStateException("Unreachable unfiltered logical type");
+            };
+            case TIMESTAMP_MICROS -> switch (schema.getType()) {
+                case LONG -> {
+                    yield (builder, obj) -> {
+                        Long l = (Long) obj;
+                        TimestampType.TIMESTAMP_MICROS.writeLong(builder, l);
+                    };
+                }
+                default -> throw new IllegalStateException("Unreachable unfiltered logical type");
+            };
+            case DECIMAL -> {
+                LogicalTypes.Decimal decimal = (LogicalTypes.Decimal) logicalType;
+                DecimalType decimalType = DecimalType.createDecimalType(decimal.getPrecision(), decimal.getScale());
+                Function<Object, byte[]> byteExtract = switch (schema.getType()) {
+                    case BYTES -> {
+                        // This is only safe because we don't reuse byte buffer objects which means each gets sized exactly for the bytes contained
+                        yield (obj) -> ((ByteBuffer) obj).array();
+                    }
+                    case FIXED -> {
+                        yield (obj) -> ((GenericFixed) obj).bytes();
+                    }
+                    default -> throw new IllegalStateException("Unreachable unfiltered logical type");
+                };
+                yield switch (decimalType) {
+                        case io.trino.spi.type.LongDecimalType longDecimalType -> {
+                            yield (builder, obj) -> {
+                                longDecimalType.writeObject(builder, Int128.fromBigEndian(byteExtract.apply(obj)));
+                            }; }
+                        case io.trino.spi.type.ShortDecimalType shortDecimalType -> {
+                            yield (builder, obj) -> {
+                                shortDecimalType.writeLong(builder, fromBigEndian(byteExtract.apply(obj)));
+                            }; }
+                    };
+            }
+            case DATE -> switch (schema.getType()) {
+                case INT -> {
+                    yield (builder, obj) -> {
+                        Integer i = (Integer) obj;
+                        DateType.DATE.writeLong(builder, i.longValue());
+                    };
+                }
+                default -> throw new IllegalStateException("Unreachable unfiltered logical type");
+            };
+            case TIME_MILLIS -> switch (schema.getType()) {
+                case INT -> {
+                    yield (builder, obj) -> {
+                        Integer i = (Integer) obj;
+                        TimeType.TIME_MILLIS.writeLong(builder, i.longValue() * 1_000_000_000);
+                    };
+                }
+                default -> throw new IllegalStateException("Unreachable unfiltered logical type");
+            };
+            case TIME_MICROS -> switch (schema.getType()) {
+                case LONG -> {
+                    yield (builder, obj) -> {
+                        Long i = (Long) obj;
+                        // convert to picos
+                        TimeType.TIME_MICROS.writeLong(builder, i * 1_000_000);
+                    };
+                }
+                default -> throw new IllegalStateException("Unreachable unfiltered logical type");
+            };
+            case UUID -> switch (schema.getType()) {
+                case STRING -> {
+                    yield (builder, obj) -> {
+                        UuidType.UUID.writeSlice(builder, javaUuidToTrinoUuid(java.util.UUID.fromString(obj.toString())));
+                    };
+                }
+                default -> throw new IllegalStateException("Unreachable unfiltered logical type");
+            };
+            default -> throw new IllegalStateException("Unreachable unfiltered logical type");
+        });
     }
 
     private <T> Optional<T> validateAndProduceFromName(Schema schema, Function<LogicalType, T> produce)
@@ -227,13 +224,13 @@ public class AvroNativeLogicalTypeManager
         }
     }
 
-
     private static final VarHandle BIG_ENDIAN_LONG_VIEW = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.BIG_ENDIAN);
+
     /**
      * Decode a long from the two's complement big-endian representation.
      *
      * @param bytes the two's complement big-endian encoding of the number. It must contain at least 1 byte.
-     *              It may contain more than 8 bytes if the leading bytes are not significant (either zeros or -1)
+     * It may contain more than 8 bytes if the leading bytes are not significant (either zeros or -1)
      * @throws ArithmeticException if the bytes represent a number outside of the range [-2^63, 2^63 - 1]
      */
     // Styled from io.trino.spi.type.Int128.fromBigEndian

@@ -1,3 +1,16 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.trino.hive.formats.avro;
 
 import com.google.common.collect.ImmutableList;
@@ -7,7 +20,6 @@ import io.trino.spi.Page;
 import io.trino.spi.block.ByteArrayBlock;
 import io.trino.spi.block.IntArrayBlock;
 import io.trino.spi.block.MapBlock;
-import io.trino.spi.type.Type;
 import org.apache.avro.Schema;
 import org.apache.avro.SchemaBuilder;
 import org.apache.avro.file.DataFileWriter;
@@ -24,7 +36,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
 
 import static io.trino.block.BlockAssertions.assertBlockEquals;
 import static io.trino.block.BlockAssertions.createStringsBlock;
@@ -80,7 +91,7 @@ public class TestAvroPageDataReaderWithoutTypeManager
     {
         int count = ThreadLocalRandom.current().nextInt(10000, 100000);
         try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, ALL_TYPE_RECORD_SCHEMA))) {
-            Iterator<Page> pageIterator = new AvroFilePageIterator(ALL_TYPE_RECORD_SCHEMA, input);
+            Iterator<Page> pageIterator = new AvroFilePageIterator(ALL_TYPE_RECORD_SCHEMA, NoOpAvroTypeManager.INSTANCE, input);
             int totalRecords = 0;
             while (pageIterator.hasNext()) {
                 Page p = pageIterator.next();
@@ -104,7 +115,7 @@ public class TestAvroPageDataReaderWithoutTypeManager
 
         int count = ThreadLocalRandom.current().nextInt(10000, 100000);
         try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, writeSchema))) {
-            Iterator<Page> pageIterator = new AvroFilePageIterator(SIMPLE_RECORD_SCHEMA, input);
+            Iterator<Page> pageIterator = new AvroFilePageIterator(SIMPLE_RECORD_SCHEMA, NoOpAvroTypeManager.INSTANCE, input);
             int totalRecords = 0;
             while (pageIterator.hasNext()) {
                 Page p = pageIterator.next();
@@ -128,7 +139,7 @@ public class TestAvroPageDataReaderWithoutTypeManager
 
         int count = ThreadLocalRandom.current().nextInt(10000, 100000);
         try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, SIMPLE_RECORD_SCHEMA))) {
-            Iterator<Page> pageIterator = new AvroFilePageIterator(readerSchema, input);
+            Iterator<Page> pageIterator = new AvroFilePageIterator(readerSchema, NoOpAvroTypeManager.INSTANCE, input);
             int totalRecords = 0;
             while (pageIterator.hasNext()) {
                 Page p = pageIterator.next();
@@ -160,7 +171,7 @@ public class TestAvroPageDataReaderWithoutTypeManager
 
         int count = ThreadLocalRandom.current().nextInt(10000, 100000);
         try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, writerSchema))) {
-            Iterator<Page> pageIterator = new AvroFilePageIterator(SIMPLE_RECORD_SCHEMA, input);
+            Iterator<Page> pageIterator = new AvroFilePageIterator(SIMPLE_RECORD_SCHEMA, NoOpAvroTypeManager.INSTANCE, input);
             int totalRecords = 0;
             while (pageIterator.hasNext()) {
                 Page p = pageIterator.next();
@@ -183,7 +194,7 @@ public class TestAvroPageDataReaderWithoutTypeManager
 
         int count = ThreadLocalRandom.current().nextInt(10000, 100000);
         try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, nullableSchema))) {
-            Iterator<Page> pageIterator = new AvroFilePageIterator(nullableSchema, input);
+            Iterator<Page> pageIterator = new AvroFilePageIterator(nullableSchema, NoOpAvroTypeManager.INSTANCE, input);
             int totalRecords = 0;
             while (pageIterator.hasNext()) {
                 Page p = pageIterator.next();
@@ -194,7 +205,8 @@ public class TestAvroPageDataReaderWithoutTypeManager
     }
 
     @Test
-    public void testPromotions() throws IOException
+    public void testPromotions()
+            throws IOException
     {
         SchemaBuilder.FieldAssembler<Schema> writeSchemaBuilder = SchemaBuilder.builder().record("writeRecord").fields();
         SchemaBuilder.FieldAssembler<Schema> readSchemaBuilder = SchemaBuilder.builder().record("readRecord").fields();
@@ -209,7 +221,7 @@ public class TestAvroPageDataReaderWithoutTypeManager
                 case DOUBLE -> ImmutableList.of(Schema.Type.INT, Schema.Type.LONG, Schema.Type.FLOAT);
                 case RECORD, ENUM, ARRAY, MAP, UNION, FIXED, INT, BOOLEAN, NULL -> ImmutableList.of();
             };
-            for(Schema.Type writeType: promotesFrom) {
+            for (Schema.Type writeType : promotesFrom) {
                 String fieldName = "field" + fieldNum.getAndIncrement();
                 writeSchemaBuilder = writeSchemaBuilder.name(fieldName).type(Schema.create(writeType)).noDefault();
                 readSchemaBuilder = readSchemaBuilder.name(fieldName).type(Schema.create(readType)).noDefault();
@@ -218,7 +230,7 @@ public class TestAvroPageDataReaderWithoutTypeManager
 
         int count = ThreadLocalRandom.current().nextInt(10000, 100000);
         try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithSchema(count, writeSchemaBuilder.endRecord()))) {
-            Iterator<Page> pageIterator = new AvroFilePageIterator(readSchemaBuilder.endRecord(), input);
+            Iterator<Page> pageIterator = new AvroFilePageIterator(readSchemaBuilder.endRecord(), NoOpAvroTypeManager.INSTANCE, input);
             int totalRecords = 0;
             while (pageIterator.hasNext()) {
                 Page p = pageIterator.next();

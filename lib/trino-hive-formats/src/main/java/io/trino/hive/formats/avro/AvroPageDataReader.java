@@ -1,3 +1,16 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.trino.hive.formats.avro;
 
 import com.google.common.base.VerifyException;
@@ -108,20 +121,21 @@ public class AvroPageDataReader
             throws IOException
     {
         if (!pageBuilder.isEmpty()) {
-            Optional<Page> lastPage =  Optional.of(pageBuilder.build());
+            Optional<Page> lastPage = Optional.of(pageBuilder.build());
             pageBuilder.reset();
             return lastPage;
         }
         return Optional.empty();
     }
 
-    private static abstract class BlockBuildingDecoder
+    private abstract static class BlockBuildingDecoder
     {
-        protected abstract void decodeIntoBlock(Decoder decoder, BlockBuilder builder) throws IOException;
+        protected abstract void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
+                throws IOException;
     }
 
-
-    private sealed interface RowBuildingAction permits SkipSchemaBuildingAction, BuildIntoBlockAction, ConstantBlockAction
+    private sealed interface RowBuildingAction
+            permits SkipSchemaBuildingAction, BuildIntoBlockAction, ConstantBlockAction
     {
         int getOutputChannel();
     }
@@ -188,7 +202,8 @@ public class AvroPageDataReader
             this.outputChannel = outputChannel;
         }
 
-        public void addConstant(IntFunction<BlockBuilder> channelSelector) throws IOException
+        public void addConstant(IntFunction<BlockBuilder> channelSelector)
+                throws IOException
         {
             addConstantFunction.accept(channelSelector.apply(outputChannel));
         }
@@ -205,7 +220,8 @@ public class AvroPageDataReader
     {
         RowBuildingAction[] buildSteps;
 
-        private RowBlockBuildingDecoder(Schema writeSchema, Schema readSchema, AvroTypeManager typeManager) throws IOException
+        private RowBlockBuildingDecoder(Schema writeSchema, Schema readSchema, AvroTypeManager typeManager)
+                throws IOException
         {
             this(Resolver.resolve(writeSchema, readSchema, new GenericData()), typeManager);
         }
@@ -257,7 +273,8 @@ public class AvroPageDataReader
             builder.closeEntry();
         }
 
-        protected void decodeIntoPageBuilder(Decoder decoder, PageBuilder builder) throws IOException
+        protected void decodeIntoPageBuilder(Decoder decoder, PageBuilder builder)
+                throws IOException
         {
             builder.declarePosition();
             decodeIntoField(decoder, builder::getBlockBuilder);
@@ -321,7 +338,8 @@ public class AvroPageDataReader
     {
         private final BlockBuildingDecoder elementBlockBuildingDecoder;
 
-        public ArrayBlockBuildingDecoder(Resolver.Container containerAction, AvroTypeManager typeManager) throws IOException
+        public ArrayBlockBuildingDecoder(Resolver.Container containerAction, AvroTypeManager typeManager)
+                throws IOException
         {
             requireNonNull(containerAction, "containerAction is null");
             verify(containerAction.reader.getType() == Schema.Type.ARRAY, "Reader schema must be a array");
@@ -346,7 +364,8 @@ public class AvroPageDataReader
         }
     }
 
-    private static class IntBlockBuildingDecoder extends BlockBuildingDecoder
+    private static class IntBlockBuildingDecoder
+            extends BlockBuildingDecoder
     {
         @Override
         protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
@@ -356,7 +375,8 @@ public class AvroPageDataReader
         }
     }
 
-    private static class LongBlockBuildingDecoder extends BlockBuildingDecoder
+    private static class LongBlockBuildingDecoder
+            extends BlockBuildingDecoder
     {
         private static final LongIoFunction<Decoder> DEFAULT_EXTRACT_LONG = Decoder::readLong;
         private final LongIoFunction<Decoder> extractLong;
@@ -403,7 +423,8 @@ public class AvroPageDataReader
         }
     }
 
-    private static class DoubleBlockBuildingDecoder extends BlockBuildingDecoder
+    private static class DoubleBlockBuildingDecoder
+            extends BlockBuildingDecoder
     {
         private static final DoubleIoFunction<Decoder> DEFAULT_EXTRACT_DOUBLE = Decoder::readDouble;
         private final DoubleIoFunction<Decoder> extractDouble;
@@ -426,7 +447,8 @@ public class AvroPageDataReader
         }
     }
 
-    private static class BooleanBlockBuildingDecoder extends BlockBuildingDecoder
+    private static class BooleanBlockBuildingDecoder
+            extends BlockBuildingDecoder
     {
         @Override
         protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
@@ -436,7 +458,8 @@ public class AvroPageDataReader
         }
     }
 
-    private static class NullBlockBuildingDecoder extends BlockBuildingDecoder
+    private static class NullBlockBuildingDecoder
+            extends BlockBuildingDecoder
     {
         @Override
         protected void decodeIntoBlock(Decoder decoder, BlockBuilder builder)
@@ -592,7 +615,8 @@ public class AvroPageDataReader
         }
     }
 
-    private static BlockBuildingDecoder createBlockBuildingDecoderForAction(Resolver.Action action, AvroTypeManager typeManager) throws IOException
+    private static BlockBuildingDecoder createBlockBuildingDecoderForAction(Resolver.Action action, AvroTypeManager typeManager)
+            throws IOException
     {
         Optional<BiConsumer<BlockBuilder, Object>> consumer = typeManager.buildingFunctionForSchema(action.reader);
         if (consumer.isPresent()) {
@@ -682,33 +706,38 @@ public class AvroPageDataReader
     }
 
     @FunctionalInterface
-    private interface IOFunction<A,B>
+    private interface IOFunction<A, B>
     {
-        B apply(A a) throws IOException;
+        B apply(A a)
+                throws IOException;
     }
 
     @FunctionalInterface
     private interface LongIoFunction<A>
     {
-        long apply(A a) throws IOException;
+        long apply(A a)
+                throws IOException;
     }
 
     @FunctionalInterface
     private interface FloatIoFunction<A>
     {
-        float apply(A a) throws IOException;
+        float apply(A a)
+                throws IOException;
     }
 
     @FunctionalInterface
     private interface DoubleIoFunction<A>
     {
-        double apply(A a) throws IOException;
+        double apply(A a)
+                throws IOException;
     }
 
     @FunctionalInterface
     private interface IoConsumer<A>
     {
-        void accept(A a) throws IOException;
+        void accept(A a)
+                throws IOException;
     }
 
     private static IoConsumer<BlockBuilder> getDefaultBlockBuilder(Schema.Field field, AvroTypeManager typeManager)
