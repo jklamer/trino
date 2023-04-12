@@ -618,7 +618,7 @@ public class AvroPageDataReader
     private static BlockBuildingDecoder createBlockBuildingDecoderForAction(Resolver.Action action, AvroTypeManager typeManager)
             throws IOException
     {
-        Optional<BiConsumer<BlockBuilder, Object>> consumer = typeManager.buildingFunctionForSchema(action.reader);
+        Optional<BiConsumer<BlockBuilder, Object>> consumer = typeManager.overrideBuildingFunctionForSchema(action.reader);
         if (consumer.isPresent()) {
             return new UserDefinedBlockBuildingDecoder(action.reader, action.writer, consumer.get());
         }
@@ -673,7 +673,7 @@ public class AvroPageDataReader
     private static IOFunction<Decoder, String> getStringPromotionFunction(Schema writerSchema)
     {
         return switch (writerSchema.getType()) {
-            case BYTES -> decoder -> new String(decoder.readBytes(null).array());
+            case BYTES -> decoder -> new String(decoder.readBytes(null).array(), StandardCharsets.UTF_8);
             default -> throw new AvroTypeException("Cannot promote type %s to string".formatted(writerSchema.getType()));
         };
     }

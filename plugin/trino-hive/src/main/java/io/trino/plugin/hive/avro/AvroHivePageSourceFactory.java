@@ -17,8 +17,8 @@ import com.google.inject.Inject;
 import io.airlift.slice.Slices;
 import io.airlift.units.DataSize;
 import io.trino.filesystem.TrinoFileSystem;
-import io.trino.filesystem.TrinoInput;
 import io.trino.filesystem.TrinoInputFile;
+import io.trino.filesystem.TrinoInputStream;
 import io.trino.filesystem.hdfs.HdfsFileSystemFactory;
 import io.trino.filesystem.memory.MemoryInputFile;
 import io.trino.hdfs.HdfsEnvironment;
@@ -42,7 +42,6 @@ import org.apache.hadoop.fs.Path;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -126,8 +125,8 @@ public class AvroHivePageSourceFactory
                 throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, "File does not exist");
             }
             if (estimatedFileSize < BUFFER_SIZE.toBytes()) {
-                try (TrinoInput input = inputFile.newInput(); InputStream inputStream = input.inputStream()) {
-                    byte[] data = inputStream.readAllBytes();
+                try (TrinoInputStream input = inputFile.newStream()) {
+                    byte[] data = input.readAllBytes();
                     inputFile = new MemoryInputFile(path.toString(), Slices.wrappedBuffer(data));
                 }
             }

@@ -25,12 +25,12 @@ public abstract class AvroTypeManager
 {
     public abstract void configure(Map<String, byte[]> fileMetaData);
 
-    public abstract Optional<Type> typeForSchema(Schema schema);
+    public abstract Optional<Type> overrideTypeForSchema(Schema schema);
 
     /**
      * Object provided by FasterReader's deserialization with no conversions.
      * Object class determined by Avro's standard generic data process
      * BlockBuilder provided by Type returned above for the schema
      */
-    public abstract Optional<BiConsumer<BlockBuilder, Object>> buildingFunctionForSchema(Schema schema);
+    public abstract Optional<BiConsumer<BlockBuilder, Object>> overrideBuildingFunctionForSchema(Schema schema);
 }

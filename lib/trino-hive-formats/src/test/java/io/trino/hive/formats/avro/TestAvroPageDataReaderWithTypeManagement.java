@@ -214,7 +214,7 @@ public class TestAvroPageDataReaderWithTypeManagement
                     assertThat(timeMicros.getPicos()).isEqualTo(39_600_000_000L * 1_000_000L);
 
                     //UUID const assert
-                    assertThat(id.toString()).isEqualTo(UuidType.UUID.getObjectValue(null, p.getBlock(3), i));
+                    assertThat(id).isEqualTo(UuidType.UUID.getObjectValue(null, p.getBlock(3), i));
                 }
                 totalRecords += p.getPositionCount();
             }

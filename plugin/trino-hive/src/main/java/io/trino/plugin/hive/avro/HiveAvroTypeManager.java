@@ -13,38 +13,68 @@
  */
 package io.trino.plugin.hive.avro;
 
+import io.trino.hive.formats.avro.AvroNativeLogicalTypeManager;
 import io.trino.hive.formats.avro.AvroTypeManager;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.type.Type;
+import org.apache.avro.AvroTypeException;
+import org.apache.avro.LogicalType;
+import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hive.conf.HiveConf;
 
+import java.nio.charset.StandardCharsets;
+import java.time.ZoneId;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TimeZone;
 import java.util.function.BiConsumer;
 
+import static java.time.ZoneOffset.UTC;
 import static java.util.Objects.requireNonNull;
 
 public class HiveAvroTypeManager
-        extends AvroTypeManager
+        extends AvroNativeLogicalTypeManager
 {
-    private final AvroTypeManager defaultManager;
+    private ZoneId writerTimezone = UTC;
+    private boolean skipConversion = false;
 
-    public HiveAvroTypeManager(AvroTypeManager defaultManager)
+    public HiveAvroTypeManager(Configuration configuration)
     {
-        this.defaultManager = requireNonNull(defaultManager, "defaultManager is null");
+        this.skipConversion = HiveConf.getBoolVar(
+                requireNonNull(configuration, "configuration is null"), HiveConf.ConfVars.HIVE_AVRO_TIMESTAMP_SKIP_CONVERSION);
     }
 
     @Override
-    public void configure(Map<String, byte[]> fileMetaData) {}
-
-    @Override
-    public Optional<Type> typeForSchema(Schema schema)
+    public void configure(Map<String, byte[]> fileMetaData)
     {
-        return defaultManager.typeForSchema(schema);
+        if (fileMetaData.containsKey(HiveAvroConstants.WRITER_TIME_ZONE)) {
+            writerTimezone = ZoneId.of(new String(fileMetaData.get(HiveAvroConstants.WRITER_TIME_ZONE), StandardCharsets.UTF_8));
+        } else if (!skipConversion) {
+            writerTimezone = TimeZone.getDefault().toZoneId();
+        }
     }
 
     @Override
-    public Optional<BiConsumer<BlockBuilder, Object>> buildingFunctionForSchema(Schema schema)
+    public Optional<Type> overrideTypeForSchema(Schema schema)
+    {
+        String logicalTypeName = schema.getProp(LogicalType.LOGICAL_TYPE_PROP);
+        if (logicalTypeName == null) {
+            return Optional.empty();
+        }
+        switch (logicalTypeName) {
+            case TIMESTAMP_MILLIS -> {
+                if(!schema.getType().equals(Schema.Type.LONG)) {
+                    throw new AvroTypeException("Invalid ")
+                }
+            }
+            default -> {}
+        }
+    }
+
+    @Override
+    public Optional<BiConsumer<BlockBuilder, Object>> overrideBuildingFunctionForSchema(Schema schema)
     {
         return defaultManager.buildingFunctionForSchema(schema);
     }

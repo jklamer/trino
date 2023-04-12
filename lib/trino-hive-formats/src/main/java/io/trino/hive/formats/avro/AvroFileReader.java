@@ -14,7 +14,7 @@
 package io.trino.hive.formats.avro;
 
 import io.trino.filesystem.TrinoInputFile;
-import io.trino.hive.formats.DataSeekableInputStream;
+import io.trino.hive.formats.TrinoDataInputStream;
 import org.apache.avro.Schema;
 import org.apache.avro.file.SeekableInput;
 
@@ -27,12 +27,8 @@ import static java.util.Objects.requireNonNull;
 public class AvroFileReader
         implements Closeable
 {
-    private final String location;
-    private final long fileSize;
-    private final long length;
-    private final long end;
-    private final DataSeekableInputStream input;
-    private AvroFilePageIterator pageIterator;
+    private final TrinoDataInputStream input;
+    private final AvroFilePageIterator pageIterator;
 
     public AvroFileReader(
             TrinoInputFile inputFile,
@@ -44,16 +40,15 @@ public class AvroFileReader
     {
         requireNonNull(inputFile, "inputFile is null");
         requireNonNull(schema, "schema is null");
-        this.location = inputFile.location();
-        this.fileSize = inputFile.length();
+        requireNonNull(avroTypeManager, "avroTypeManager is null");
+        long fileSize = inputFile.length();
 
         verify(offset >= 0, "offset is negative");
         verify(offset < inputFile.length(), "offset is greater than data size");
         verify(length >= 1, "length must be at least 1");
-        this.length = length;
-        this.end = offset + length;
+        long end = offset + length;
         verify(end <= fileSize, "offset plus length is greater than data size");
-        input = new DataSeekableInputStream(inputFile.newInput().inputStream());
+        input = new TrinoDataInputStream(inputFile.newStream());
         input.seek(offset);
         this.pageIterator = new AvroFilePageIterator(schema, avroTypeManager, new SeekableInput()
         {

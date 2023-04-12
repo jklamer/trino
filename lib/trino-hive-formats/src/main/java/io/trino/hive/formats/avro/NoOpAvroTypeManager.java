@@ -32,13 +32,13 @@ public class NoOpAvroTypeManager
     public void configure(Map<String, byte[]> fileMetaData) {}
 
     @Override
-    public Optional<Type> typeForSchema(Schema schema)
+    public Optional<Type> overrideTypeForSchema(Schema schema)
     {
         return Optional.empty();
     }
 
     @Override
-    public Optional<BiConsumer<BlockBuilder, Object>> buildingFunctionForSchema(Schema schema)
+    public Optional<BiConsumer<BlockBuilder, Object>> overrideBuildingFunctionForSchema(Schema schema)
     {
         return Optional.empty();
     }

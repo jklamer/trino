@@ -21,6 +21,9 @@ public final class HiveAvroConstants
     public static final String OUTPUT_CODEC_JOB_CONF = "avro.output.codec";
     public static final String AVRO_SERDE_SCHEMA = "avro.serde.schema";
 
+    // file metadata
+    public static final String WRITER_TIME_ZONE = "writer.time.zone";
+
     //hive table properties
     public static final String SCHEMA_LITERAL = "avro.schema.literal";
     public static final String SCHEMA_URL = "avro.schema.url";

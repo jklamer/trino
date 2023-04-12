@@ -14,8 +14,8 @@
 package io.trino.plugin.hive.avro;
 
 import io.trino.filesystem.TrinoFileSystem;
-import io.trino.filesystem.TrinoInput;
 import io.trino.filesystem.TrinoInputFile;
+import io.trino.filesystem.TrinoInputStream;
 import io.trino.plugin.hive.HiveType;
 import io.trino.plugin.hive.type.CharTypeInfo;
 import io.trino.plugin.hive.type.DecimalTypeInfo;
@@ -32,7 +32,6 @@ import org.apache.avro.SchemaBuilder;
 import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -79,7 +78,7 @@ public final class AvroHiveFileUtils
             if (!schemaFile.exists()) {
                 throw new IOException("No avro schema file not found at " + schemaURL);
             }
-            try (TrinoInput trinoInput = schemaFile.newInput(); InputStream inputStream = trinoInput.inputStream()) {
+            try (TrinoInputStream inputStream = schemaFile.newStream()) {
                 getSchemaParser().parse(inputStream);
             }
             catch (IOException ioException) {

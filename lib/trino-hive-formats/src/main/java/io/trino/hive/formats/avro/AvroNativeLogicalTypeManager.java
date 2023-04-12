@@ -38,6 +38,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 
 import static io.trino.spi.type.UuidType.javaUuidToTrinoUuid;
+import static java.util.Objects.requireNonNull;
 import static org.apache.avro.LogicalTypes.fromSchemaIgnoreInvalid;
 
 /**
@@ -56,15 +57,15 @@ public class AvroNativeLogicalTypeManager
     public static final Schema UUID_SCHEMA;
 
     // Copied from org.apache.avro.LogicalTypes
-    private static final String DECIMAL = "decimal";
-    private static final String UUID = "uuid";
-    private static final String DATE = "date";
-    private static final String TIME_MILLIS = "time-millis";
-    private static final String TIME_MICROS = "time-micros";
-    private static final String TIMESTAMP_MILLIS = "timestamp-millis";
-    private static final String TIMESTAMP_MICROS = "timestamp-micros";
-    private static final String LOCAL_TIMESTAMP_MILLIS = "local-timestamp-millis";
-    private static final String LOCAL_TIMESTAMP_MICROS = "local-timestamp-micros";
+    protected static final String DECIMAL = "decimal";
+    protected static final String UUID = "uuid";
+    protected static final String DATE = "date";
+    protected static final String TIME_MILLIS = "time-millis";
+    protected static final String TIME_MICROS = "time-micros";
+    protected static final String TIMESTAMP_MILLIS = "timestamp-millis";
+    protected static final String TIMESTAMP_MICROS = "timestamp-micros";
+    protected static final String LOCAL_TIMESTAMP_MILLIS = "local-timestamp-millis";
+    protected static final String LOCAL_TIMESTAMP_MICROS = "local-timestamp-micros";
 
     static {
         TIMESTAMP_MILLI_SCHEMA = SchemaBuilder.builder().longType();
@@ -88,7 +89,7 @@ public class AvroNativeLogicalTypeManager
 
     // Heavily borrow from org.apache.avro.LogicalTypes#fromSchemaImpl(org.apache.avro.Schema, boolean)
     @Override
-    public Optional<Type> typeForSchema(Schema schema)
+    public Optional<Type> overrideTypeForSchema(Schema schema)
     {
         return validateAndProduceFromName(schema, logicalType -> switch (logicalType.getName()) {
             case TIMESTAMP_MILLIS -> TimestampType.TIMESTAMP_MILLIS;
@@ -106,7 +107,7 @@ public class AvroNativeLogicalTypeManager
     }
 
     @Override
-    public Optional<BiConsumer<BlockBuilder, Object>> buildingFunctionForSchema(Schema schema)
+    public Optional<BiConsumer<BlockBuilder, Object>> overrideBuildingFunctionForSchema(Schema schema)
     {
         return validateAndProduceFromName(schema, logicalType -> switch (logicalType.getName()) {
             case TIMESTAMP_MILLIS -> switch (schema.getType()) {
@@ -191,11 +192,60 @@ public class AvroNativeLogicalTypeManager
         });
     }
 
+    protected abstract sealed class ValidateLogicalTypeResult
+            permits NoLogicalType, NotNativeAvroLogicalType, InvalidNativeAvroLogicalType, ValidNativeAvroLogicalType {}
+
+    private final class NoLogicalType
+            extends ValidateLogicalTypeResult {}
+
+    private final class NotNativeAvroLogicalType
+            extends ValidateLogicalTypeResult {}
+
+    private final class InvalidNativeAvroLogicalType
+            extends ValidateLogicalTypeResult
+    {
+        private final RuntimeException cause;
+
+        public InvalidNativeAvroLogicalType(RuntimeException cause)
+        {
+            this.cause = requireNonNull(cause, "cause is null");
+        }
+    }
+
+    private final class ValidNativeAvroLogicalType
+            extends ValidateLogicalTypeResult
+    {
+        private final LogicalType logicalType;
+
+        public ValidNativeAvroLogicalType(LogicalType logicalType)
+        {
+            this.logicalType = requireNonNull(logicalType, "logicalType is null");
+        }
+    }
+
     private <T> Optional<T> validateAndProduceFromName(Schema schema, Function<LogicalType, T> produce)
     {
+        ValidateLogicalTypeResult logicalTypeResult = validateLogicalType(schema);
+        return switch (logicalTypeResult) {
+            case NoLogicalType ignored -> Optional.empty();
+            case NotNativeAvroLogicalType ignored -> {
+                log.warn("Unrecognized logical type " + schema);
+                yield Optional.empty();
+            }
+            case InvalidNativeAvroLogicalType invalidNativeAvroLogicalType -> {
+                log.error("Invalidly configured native avro logical type", invalidNativeAvroLogicalType.cause);
+                yield Optional.empty();
+            }
+            case ValidNativeAvroLogicalType validNativeAvroLogicalType -> {
+                yield Optional.of(produce.apply(validNativeAvroLogicalType.logicalType));
+            }
+        };
+    }
+
+    protected ValidateLogicalTypeResult validateLogicalType(Schema schema) {
         final String typeName = schema.getProp(LogicalType.LOGICAL_TYPE_PROP);
         if (typeName == null) {
-            return Optional.empty();
+            return new NoLogicalType();
         }
         LogicalType logicalType = null;
         switch (typeName) {
@@ -204,10 +254,8 @@ public class AvroNativeLogicalTypeManager
                 break;
             case LOCAL_TIMESTAMP_MICROS + LOCAL_TIMESTAMP_MILLIS:
                 log.warn("Logical type " + typeName + " not currently supported by by Trino");
-                break;
             default:
-                log.warn("Unrecognized logical type " + typeName);
-                break;
+                return new NotNativeAvroLogicalType();
         }
         // make sure the type is valid before returning it
         if (logicalType != null) {
@@ -215,12 +263,12 @@ public class AvroNativeLogicalTypeManager
                 logicalType.validate(schema);
             }
             catch (RuntimeException e) {
-                log.warn("Invalid logical type found", e);
+                return new InvalidNativeAvroLogicalType(e);
             }
-            return Optional.of(produce.apply(logicalType));
+            return new ValidNativeAvroLogicalType(logicalType);
         }
         else {
-            return Optional.empty();
+            return new NotNativeAvroLogicalType();
         }
     }
 

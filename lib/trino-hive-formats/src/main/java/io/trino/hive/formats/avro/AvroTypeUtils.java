@@ -46,7 +46,7 @@ public class AvroTypeUtils
 
     private static Type typeFromAvro(final Schema schema, AvroTypeManager avroTypeManager, Set<Schema> enclosingRecords)
     {
-        Optional<Type> customType = avroTypeManager.typeForSchema(schema);
+        Optional<Type> customType = avroTypeManager.overrideTypeForSchema(schema);
         return customType.orElseGet(() -> switch (schema.getType()) {
             case RECORD -> {
                 if (!enclosingRecords.add(schema)) {
