@@ -76,7 +76,6 @@ import static io.trino.plugin.hive.util.HiveClassNames.LAZY_BINARY_COLUMNAR_SERD
 import static io.trino.plugin.hive.util.HiveUtil.getDeserializerClassName;
 import static io.trino.plugin.hive.util.SerdeConstants.SERIALIZATION_LIB;
 import static java.lang.Math.min;
-import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 public class RcFilePageSourceFactory

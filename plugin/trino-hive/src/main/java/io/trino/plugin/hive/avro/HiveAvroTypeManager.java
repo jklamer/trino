@@ -13,7 +13,6 @@
  */
 package io.trino.plugin.hive.avro;
 
-import io.trino.hive.formats.avro.AvroNativeLogicalTypeManager;
 import io.trino.hive.formats.avro.AvroTypeManager;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.type.Type;
@@ -23,22 +22,30 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.BiConsumer;
 
-public class HiveAvroTypeManager extends AvroNativeLogicalTypeManager
+import static java.util.Objects.requireNonNull;
+
+public class HiveAvroTypeManager
+        extends AvroTypeManager
 {
-    @Override
-    public void configure(Map<String, byte[]> fileMetaData)
+    private final AvroTypeManager defaultManager;
+
+    public HiveAvroTypeManager(AvroTypeManager defaultManager)
     {
+        this.defaultManager = requireNonNull(defaultManager, "defaultManager is null");
     }
+
+    @Override
+    public void configure(Map<String, byte[]> fileMetaData) {}
 
     @Override
     public Optional<Type> typeForSchema(Schema schema)
     {
-        return super.typeForSchema(schema);
+        return defaultManager.typeForSchema(schema);
     }
 
     @Override
     public Optional<BiConsumer<BlockBuilder, Object>> buildingFunctionForSchema(Schema schema)
     {
-        return super.buildingFunctionForSchema(schema);
+        return defaultManager.buildingFunctionForSchema(schema);
     }
 }

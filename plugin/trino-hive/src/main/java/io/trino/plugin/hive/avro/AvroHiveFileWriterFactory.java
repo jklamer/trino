@@ -29,11 +29,9 @@ import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.type.TypeManager;
 import org.apache.avro.Schema;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.mapred.JobConf;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
 import java.util.Optional;
@@ -96,15 +94,8 @@ public class AvroHiveFileWriterFactory
 
             Closeable rollbackAction = () -> fileSystem.deleteFile(path.toString());
 
+            // TODO return
             return Optional.empty();
-//            return Optional.of(
-//                    new AvroHiveFileWriter(
-//                            outputStream,
-//                            outputStreamMemoryContext,
-//                            rollbackAction,
-//                            fileSchema,
-//                    )
-//            );
         }
         catch (Exception e) {
             throw new TrinoException(HIVE_WRITER_OPEN_ERROR, "Error creating Avro Container file", e);

@@ -208,9 +208,9 @@ public final class HiveUtil
             .precomputed();
 
     public static String splitError(Throwable t, Path path, long start, long length)
-            {
-                return format("Error opening Hive split %s (offset=%s, length=%s): %s", path, start, length, t.getMessage());
-            }
+    {
+        return format("Error opening Hive split %s (offset=%s, length=%s): %s", path, start, length, t.getMessage());
+    }
 
     static {
         DateTimeParser[] timestampWithoutTimeZoneParser = {

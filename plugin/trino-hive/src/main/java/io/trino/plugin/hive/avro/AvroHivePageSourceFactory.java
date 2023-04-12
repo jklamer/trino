@@ -22,10 +22,10 @@ import io.trino.filesystem.TrinoInputFile;
 import io.trino.filesystem.hdfs.HdfsFileSystemFactory;
 import io.trino.filesystem.memory.MemoryInputFile;
 import io.trino.hdfs.HdfsEnvironment;
+import io.trino.hive.formats.avro.AvroNativeLogicalTypeManager;
 import io.trino.plugin.hive.AcidInfo;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.HiveColumnHandle;
-import io.trino.plugin.hive.HiveConfig;
 import io.trino.plugin.hive.HivePageSourceFactory;
 import io.trino.plugin.hive.MonitoredTrinoInputFile;
 import io.trino.plugin.hive.ReaderColumns;
@@ -37,7 +37,6 @@ import io.trino.spi.connector.EmptyPageSource;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.TypeManager;
 import org.apache.avro.Schema;
-import org.apache.commons.lang.NotImplementedException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 
@@ -150,7 +149,7 @@ public class AvroHivePageSourceFactory
         }
 
         try {
-            return Optional.of(new ReaderPageSource(new AvroHivePageSource(inputFile, avroSchema, new HiveAvroTypeManager(), start, length), readerProjections));
+            return Optional.of(new ReaderPageSource(new AvroHivePageSource(inputFile, avroSchema, new HiveAvroTypeManager(new AvroNativeLogicalTypeManager()), start, length), readerProjections));
         }
         catch (IOException e) {
             throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, e);

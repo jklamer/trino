@@ -15,7 +15,6 @@ package io.trino.plugin.hive.avro;
 
 import com.google.common.io.CountingOutputStream;
 import io.trino.hive.formats.compression.CompressionKind;
-import io.trino.hive.formats.encodings.ColumnEncodingFactory;
 import io.trino.memory.context.AggregatedMemoryContext;
 import io.trino.plugin.hive.FileWriter;
 import io.trino.spi.Page;
@@ -51,7 +50,7 @@ public class AvroHiveFileWriter
     {
         this.outputStream = new CountingOutputStream(outputStream);
         this.outputStreamMemoryContext = outputStreamMemoryContext;
-        this.rollbackAction = requireNonNull(rollbackAction,"rollbackAction is null");
+        this.rollbackAction = requireNonNull(rollbackAction, "rollbackAction is null");
     }
 
     @Override

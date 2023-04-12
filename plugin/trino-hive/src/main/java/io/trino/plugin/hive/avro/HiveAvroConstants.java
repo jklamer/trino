@@ -15,6 +15,8 @@ package io.trino.plugin.hive.avro;
 
 public final class HiveAvroConstants
 {
+    private HiveAvroConstants() {}
+
     // Job configuration keys
     public static final String OUTPUT_CODEC_JOB_CONF = "avro.output.codec";
     public static final String AVRO_SERDE_SCHEMA = "avro.serde.schema";
@@ -39,8 +41,8 @@ public final class HiveAvroConstants
     public static final String ZSTANDARD_CODEC = "zstandard";
 
     // Hive Logical types
-    public static final String CHAR_TYPE_NAME = "char";
-    public static final String VARCHAR_TYPE_NAME = "varchar";
+    public static final String CHAR_TYPE_LOGICAL_NAME = "char";
+    public static final String VARCHAR_TYPE_LOGICAL_NAME = "varchar";
     public static final String DATE_TYPE_NAME = "date";
     public static final String TIMESTAMP_TYPE_NAME = "timestamp-millis";
 }

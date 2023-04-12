@@ -68,7 +68,7 @@ public class AvroFileReader
             public long tell()
                     throws IOException
             {
-                return input.getPos();
+                return input.getPos() - offset;
             }
 
             @Override
@@ -89,7 +89,7 @@ public class AvroFileReader
             public void close()
                     throws IOException
             {
-                input.close();
+                // input closed by enclosing class
             }
         });
     }

@@ -42,7 +42,7 @@ import java.util.Random;
 
 import static io.trino.plugin.hive.HiveMetadata.TABLE_COMMENT;
 import static io.trino.plugin.hive.avro.HiveAvroConstants.AVRO_SERDE_SCHEMA;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.CHAR_TYPE_NAME;
+import static io.trino.plugin.hive.avro.HiveAvroConstants.CHAR_TYPE_LOGICAL_NAME;
 import static io.trino.plugin.hive.avro.HiveAvroConstants.DATE_TYPE_NAME;
 import static io.trino.plugin.hive.avro.HiveAvroConstants.SCHEMA_DOC;
 import static io.trino.plugin.hive.avro.HiveAvroConstants.SCHEMA_LITERAL;
@@ -52,7 +52,7 @@ import static io.trino.plugin.hive.avro.HiveAvroConstants.SCHEMA_NONE;
 import static io.trino.plugin.hive.avro.HiveAvroConstants.SCHEMA_URL;
 import static io.trino.plugin.hive.avro.HiveAvroConstants.TABLE_NAME;
 import static io.trino.plugin.hive.avro.HiveAvroConstants.TIMESTAMP_TYPE_NAME;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.VARCHAR_TYPE_NAME;
+import static io.trino.plugin.hive.avro.HiveAvroConstants.VARCHAR_TYPE_LOGICAL_NAME;
 import static io.trino.plugin.hive.util.HiveUtil.getColumnNames;
 import static io.trino.plugin.hive.util.HiveUtil.getColumnTypes;
 import static io.trino.plugin.hive.util.SerdeConstants.LIST_COLUMN_COMMENTS;
@@ -60,6 +60,8 @@ import static java.util.function.Predicate.not;
 
 public final class AvroHiveFileUtils
 {
+    private AvroHiveFileUtils() {}
+
     // Lifted and shifted from org.apache.hadoop.hive.serde2.avro.AvroSerdeUtils.determineSchemaOrThrowException
     public static Schema determineSchemaOrThrowException(TrinoFileSystem fileSystem, Configuration conf, Properties properties)
             throws IOException
@@ -187,11 +189,11 @@ public final class AvroHiveFileUtils
             case STRING -> Schema.create(Schema.Type.STRING);
             case CHAR -> getSchemaParser().parse("{" +
                     "\"type\":\"" + Schema.Type.STRING.getName() + "\"," +
-                    "\"logicalType\":\"" + CHAR_TYPE_NAME + "\"," +
+                    "\"logicalType\":\"" + CHAR_TYPE_LOGICAL_NAME + "\"," +
                     "\"maxLength\":" + ((CharTypeInfo) hiveType.getTypeInfo()).getLength() + "}");
             case VARCHAR -> getSchemaParser().parse("{" +
                     "\"type\":\"" + Schema.Type.STRING.getName() + "\"," +
-                    "\"logicalType\":\"" + VARCHAR_TYPE_NAME + "\"," +
+                    "\"logicalType\":\"" + VARCHAR_TYPE_LOGICAL_NAME + "\"," +
                     "\"maxLength\":" + ((VarcharTypeInfo) hiveType.getTypeInfo()).getLength() + "}");
             case BINARY -> Schema.create(Schema.Type.BYTES);
             case BYTE, SHORT, INT -> Schema.create(Schema.Type.INT);
