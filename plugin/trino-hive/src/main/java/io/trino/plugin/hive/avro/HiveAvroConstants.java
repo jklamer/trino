@@ -48,4 +48,5 @@ public final class HiveAvroConstants
     public static final String VARCHAR_TYPE_LOGICAL_NAME = "varchar";
     public static final String DATE_TYPE_NAME = "date";
     public static final String TIMESTAMP_TYPE_NAME = "timestamp-millis";
+    public static final String VARCHAR_AND_CHAR_LOGICAL_TYPE_LENGTH_PROP = "maxLength";
 }

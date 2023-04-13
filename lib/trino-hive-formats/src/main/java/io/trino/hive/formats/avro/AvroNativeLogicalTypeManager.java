@@ -195,31 +195,61 @@ public class AvroNativeLogicalTypeManager
     protected abstract sealed class ValidateLogicalTypeResult
             permits NoLogicalType, NotNativeAvroLogicalType, InvalidNativeAvroLogicalType, ValidNativeAvroLogicalType {}
 
-    private final class NoLogicalType
+    protected final class NoLogicalType
             extends ValidateLogicalTypeResult {}
 
-    private final class NotNativeAvroLogicalType
-            extends ValidateLogicalTypeResult {}
-
-    private final class InvalidNativeAvroLogicalType
+    protected final class NotNativeAvroLogicalType
             extends ValidateLogicalTypeResult
     {
-        private final RuntimeException cause;
+        protected final String logicalTypeName;
 
-        public InvalidNativeAvroLogicalType(RuntimeException cause)
+        public NotNativeAvroLogicalType(String logicalTypeName)
         {
-            this.cause = requireNonNull(cause, "cause is null");
+            this.logicalTypeName = requireNonNull(logicalTypeName, "logicalTypeName is null");
+        }
+
+        public String getLogicalTypeName()
+        {
+            return logicalTypeName;
         }
     }
 
-    private final class ValidNativeAvroLogicalType
+    protected final class InvalidNativeAvroLogicalType
             extends ValidateLogicalTypeResult
     {
-        private final LogicalType logicalType;
+        protected final String logicalTypeName;
+        protected final RuntimeException cause;
+
+        public InvalidNativeAvroLogicalType(String logicalTypeName, RuntimeException cause)
+        {
+            this.logicalTypeName = requireNonNull(logicalTypeName, "logicalTypeName");
+            this.cause = requireNonNull(cause, "cause is null");
+        }
+
+        public String getLogicalTypeName()
+        {
+            return logicalTypeName;
+        }
+
+        public RuntimeException getCause()
+        {
+            return cause;
+        }
+    }
+
+    protected final class ValidNativeAvroLogicalType
+            extends ValidateLogicalTypeResult
+    {
+        protected final LogicalType logicalType;
 
         public ValidNativeAvroLogicalType(LogicalType logicalType)
         {
             this.logicalType = requireNonNull(logicalType, "logicalType is null");
+        }
+
+        public LogicalType getLogicalType()
+        {
+            return logicalType;
         }
     }
 
@@ -242,7 +272,8 @@ public class AvroNativeLogicalTypeManager
         };
     }
 
-    protected ValidateLogicalTypeResult validateLogicalType(Schema schema) {
+    protected ValidateLogicalTypeResult validateLogicalType(Schema schema)
+    {
         final String typeName = schema.getProp(LogicalType.LOGICAL_TYPE_PROP);
         if (typeName == null) {
             return new NoLogicalType();
@@ -255,7 +286,7 @@ public class AvroNativeLogicalTypeManager
             case LOCAL_TIMESTAMP_MICROS + LOCAL_TIMESTAMP_MILLIS:
                 log.warn("Logical type " + typeName + " not currently supported by by Trino");
             default:
-                return new NotNativeAvroLogicalType();
+                return new NotNativeAvroLogicalType(typeName);
         }
         // make sure the type is valid before returning it
         if (logicalType != null) {
@@ -263,12 +294,12 @@ public class AvroNativeLogicalTypeManager
                 logicalType.validate(schema);
             }
             catch (RuntimeException e) {
-                return new InvalidNativeAvroLogicalType(e);
+                return new InvalidNativeAvroLogicalType(typeName, e);
             }
             return new ValidNativeAvroLogicalType(logicalType);
         }
         else {
-            return new NotNativeAvroLogicalType();
+            return new NotNativeAvroLogicalType(typeName);
         }
     }
 

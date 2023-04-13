@@ -22,7 +22,6 @@ import io.trino.filesystem.TrinoInputStream;
 import io.trino.filesystem.hdfs.HdfsFileSystemFactory;
 import io.trino.filesystem.memory.MemoryInputFile;
 import io.trino.hdfs.HdfsEnvironment;
-import io.trino.hive.formats.avro.AvroNativeLogicalTypeManager;
 import io.trino.plugin.hive.AcidInfo;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.HiveColumnHandle;
@@ -148,7 +147,7 @@ public class AvroHivePageSourceFactory
         }
 
         try {
-            return Optional.of(new ReaderPageSource(new AvroHivePageSource(inputFile, avroSchema, new HiveAvroTypeManager(new AvroNativeLogicalTypeManager()), start, length), readerProjections));
+            return Optional.of(new ReaderPageSource(new AvroHivePageSource(inputFile, avroSchema, new HiveAvroTypeManager(configuration), start, length), readerProjections));
         }
         catch (IOException e) {
             throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, e);
