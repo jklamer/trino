@@ -16,10 +16,12 @@ package io.trino.hive.formats.avro;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
+import io.airlift.slice.Slice;
 import io.trino.spi.Page;
 import io.trino.spi.block.ByteArrayBlock;
 import io.trino.spi.block.IntArrayBlock;
 import io.trino.spi.block.MapBlock;
+import io.trino.spi.type.VarcharType;
 import org.apache.avro.Schema;
 import org.apache.avro.SchemaBuilder;
 import org.apache.avro.file.DataFileWriter;
@@ -31,6 +33,7 @@ import org.testng.annotations.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
@@ -54,6 +57,12 @@ public class TestAvroPageDataReaderWithoutTypeManager
             .name("c")
             .type().stringType().noDefault()
             .endRecord();
+
+    private static final Schema SIMPLE_ENUM_SCHEMA = SchemaBuilder.enumeration("myEnumType").symbols("A", "B", "C");
+
+    private static final Schema SIMPLE_ENUM_SUPER_SCHEMA = SchemaBuilder.enumeration("myEnumType").symbols("A", "B", "C", "D");
+
+    private static final Schema SIMPLE_ENUM_REORDERED = SchemaBuilder.enumeration("myEnumType").symbols("C", "D", "B", "A");
 
     private static final Schema ALL_TYPE_RECORD_SCHEMA = SchemaBuilder.builder()
             .record("all")
@@ -79,7 +88,7 @@ public class TestAvroPageDataReaderWithoutTypeManager
             .name("aMap")
             .type().map().values().intType().noDefault()
             .name("anEnum")
-            .type().enumeration("myEnumType").symbols("A", "B", "C").noDefault()
+            .type(SIMPLE_ENUM_SCHEMA).noDefault()
             .name("aRecord")
             .type(SIMPLE_RECORD_SCHEMA)
             .noDefault()
@@ -165,7 +174,12 @@ public class TestAvroPageDataReaderWithoutTypeManager
     {
         SchemaBuilder.FieldAssembler<Schema> fieldAssembler = SchemaBuilder.builder().record("simpleRecord").fields();
         for (Schema.Field field : Lists.reverse(SIMPLE_RECORD_SCHEMA.getFields())) {
-            fieldAssembler = fieldAssembler.name(field.name()).type(field.schema()).noDefault();
+            if(field.schema().getType().equals(Schema.Type.ENUM)) {
+                fieldAssembler = fieldAssembler.name(field.name()).type(SIMPLE_ENUM_REORDERED).noDefault();
+
+            } else {
+                fieldAssembler = fieldAssembler.name(field.name()).type(field.schema()).noDefault();
+            }
         }
         Schema writerSchema = fieldAssembler.endRecord();
 
@@ -238,6 +252,65 @@ public class TestAvroPageDataReaderWithoutTypeManager
             }
             assertThat(totalRecords).isEqualTo(count);
         }
+    }
+
+    @Test
+    public void testEnum() throws IOException
+    {
+        Schema base = SchemaBuilder.record("test").fields()
+                .name("myEnum")
+                .type(SIMPLE_ENUM_SCHEMA).noDefault()
+                .endRecord();
+        Schema superSchema = SchemaBuilder.record("test").fields()
+                .name("myEnum")
+                .type(SIMPLE_ENUM_SUPER_SCHEMA).noDefault()
+                .endRecord();
+        Schema reorderdSchema = SchemaBuilder.record("test").fields()
+                .name("myEnum")
+                .type(SIMPLE_ENUM_REORDERED).noDefault()
+                .endRecord();
+
+        GenericRecord expected = (GenericRecord) new RandomData(base, 1).iterator().next();
+
+        //test super
+        try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithData(base, ImmutableList.of(expected)))) {
+            Iterator<Page> pageIterator = new AvroFilePageIterator(superSchema, NoOpAvroTypeManager.INSTANCE, input);
+            int totalRecords = 0;
+            while (pageIterator.hasNext()) {
+                Page p = pageIterator.next();
+                String actualSymbol = new String(((Slice) VarcharType.VARCHAR.getObject(p.getBlock(0), 0)).getBytes(), StandardCharsets.UTF_8);
+                assertThat(actualSymbol).isEqualTo(expected.get("myEnum").toString());
+                totalRecords += p.getPositionCount();
+            }
+            assertThat(totalRecords).isEqualTo(1);
+        }
+
+        //test reordered
+        try (SeekableFileInput input = new SeekableFileInput(createWrittenFileWithData(base, ImmutableList.of(expected)))) {
+            Iterator<Page> pageIterator = new AvroFilePageIterator(reorderdSchema, NoOpAvroTypeManager.INSTANCE, input);
+            int totalRecords = 0;
+            while (pageIterator.hasNext()) {
+                Page p = pageIterator.next();
+                String actualSymbol = new String(((Slice) VarcharType.VARCHAR.getObject(p.getBlock(0), 0)).getBytes(), StandardCharsets.UTF_8);
+                assertThat(actualSymbol).isEqualTo(expected.get("myEnum").toString());
+                totalRecords += p.getPositionCount();
+            }
+            assertThat(totalRecords).isEqualTo(1);
+        }
+    }
+
+    protected static File createWrittenFileWithData(Schema schema, List<GenericRecord> records)
+            throws IOException
+    {
+        File tempFile = File.createTempFile("testingAvroReading", null);
+        try (DataFileWriter<GenericRecord> fileWriter = new DataFileWriter<>(new GenericDatumWriter<>())) {
+            fileWriter.create(schema, tempFile);
+            for (GenericRecord genericRecord : records) {
+                fileWriter.append(genericRecord);
+            }
+        }
+        tempFile.deleteOnExit();
+        return tempFile;
     }
 
     protected static File createWrittenFileWithSchema(int count, Schema schema)
