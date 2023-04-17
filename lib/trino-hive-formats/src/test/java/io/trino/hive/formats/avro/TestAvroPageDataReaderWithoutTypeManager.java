@@ -174,10 +174,10 @@ public class TestAvroPageDataReaderWithoutTypeManager
     {
         SchemaBuilder.FieldAssembler<Schema> fieldAssembler = SchemaBuilder.builder().record("simpleRecord").fields();
         for (Schema.Field field : Lists.reverse(SIMPLE_RECORD_SCHEMA.getFields())) {
-            if(field.schema().getType().equals(Schema.Type.ENUM)) {
+            if (field.schema().getType().equals(Schema.Type.ENUM)) {
                 fieldAssembler = fieldAssembler.name(field.name()).type(SIMPLE_ENUM_REORDERED).noDefault();
-
-            } else {
+            }
+            else {
                 fieldAssembler = fieldAssembler.name(field.name()).type(field.schema()).noDefault();
             }
         }
@@ -255,7 +255,8 @@ public class TestAvroPageDataReaderWithoutTypeManager
     }
 
     @Test
-    public void testEnum() throws IOException
+    public void testEnum()
+            throws IOException
     {
         Schema base = SchemaBuilder.record("test").fields()
                 .name("myEnum")
