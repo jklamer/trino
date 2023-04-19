@@ -58,8 +58,8 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 public class TestAvroPageDataReaderWithTypeManagement
 {
     private static final Schema DECIMAL_SMALL_BYTES_SCHEMA;
-    private static final int SMALL_FIXED_SIZE = (int) ((MAX_SHORT_PRECISION) * Math.log(10) / Math.log(2) / 8) + 1; // TODO math
-    private static final int LARGE_FIXED_SIZE = (int) ((MAX_SHORT_PRECISION + 2) * Math.log(10) / Math.log(2) / 8) + 1;
+    private static final int SMALL_FIXED_SIZE = 8;
+    private static final int LARGE_FIXED_SIZE = 9;
     private static final Schema DECIMAL_SMALL_FIXED_SCHEMA;
     private static final Schema DECIMAL_LARGE_BYTES_SCHEMA;
     private static final Schema DECIMAL_LARGE_FIXED_SCHEMA;

@@ -26,7 +26,6 @@ import org.apache.avro.AvroTypeException;
 import org.apache.avro.Resolver;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
-import org.apache.avro.generic.GenericDatumReader;
 import org.apache.avro.io.BinaryDecoder;
 import org.apache.avro.io.DatumReader;
 import org.apache.avro.io.Decoder;
@@ -39,7 +38,6 @@ import org.apache.avro.util.internal.Accessor;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -68,10 +66,10 @@ public class AvroPageDataReader
     private Schema writerSchema;
     private final PageBuilder pageBuilder;
     private RowBlockBuildingDecoder rowBlockBuildingDecoder;
-    private AvroTypeManager typeManager;
+    private final AvroTypeManager typeManager;
 
     public AvroPageDataReader(Schema readerSchema, AvroTypeManager typeManager)
-            throws IOException
+
     {
         this.readerSchema = requireNonNull(readerSchema, "readerSchema is null");
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
@@ -83,7 +81,6 @@ public class AvroPageDataReader
     }
 
     private void initialize()
-            throws IOException
     {
         verify(readerSchema.getType().equals(Schema.Type.RECORD), "Avro schema for page reader must be record");
         verify(writerSchema.getType().equals(Schema.Type.RECORD), "File Avro schema for page reader must be record");
@@ -95,12 +92,7 @@ public class AvroPageDataReader
     {
         if (schema != null && schema != writerSchema) {
             writerSchema = schema;
-            try {
-                initialize();
-            }
-            catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
+            initialize();
         }
     }
 
@@ -118,7 +110,6 @@ public class AvroPageDataReader
     }
 
     public Optional<Page> flush()
-            throws IOException
     {
         if (!pageBuilder.isEmpty()) {
             Optional<Page> lastPage = Optional.of(pageBuilder.build());
@@ -140,26 +131,142 @@ public class AvroPageDataReader
         int getOutputChannel();
     }
 
-    private static final class SkipSchemaBuildingAction
-            implements RowBuildingAction
+    @FunctionalInterface
+    private interface SkipAction
     {
-        private final Schema schema;
+        void skip(Decoder decoder)
+                throws IOException;
+    }
+
+    private static final class SkipSchemaBuildingAction
+            implements RowBuildingAction, SkipAction
+    {
+        private final SkipAction skipAction;
 
         SkipSchemaBuildingAction(Schema schema)
         {
-            this.schema = requireNonNull(schema, "schema is null");
+            skipAction = createSkipActionForSchema(requireNonNull(schema, "schema is null"));
         }
 
-        private void skip(Decoder decoder)
+        public void skip(Decoder decoder)
                 throws IOException
         {
-            GenericDatumReader.skip(schema, decoder);
+            skipAction.skip(decoder);
         }
 
         @Override
         public int getOutputChannel()
         {
             return -1;
+        }
+    }
+
+    private static SkipAction createSkipActionForSchema(Schema schema)
+    {
+        return switch (schema.getType()) {
+            case NULL -> Decoder::readNull;
+            case BOOLEAN -> Decoder::readBoolean;
+            case INT -> Decoder::readInt;
+            case LONG -> Decoder::readLong;
+            case FLOAT -> Decoder::readFloat;
+            case DOUBLE -> Decoder::readDouble;
+            case STRING -> Decoder::skipString;
+            case BYTES -> Decoder::skipBytes;
+            case ENUM -> Decoder::readEnum;
+            case FIXED -> decoder -> decoder.skipFixed(schema.getFixedSize());
+            case ARRAY -> new ArraySkipAction(schema.getElementType());
+            case MAP -> new MapSkipAction(schema.getValueType());
+            case UNION -> new UnionSkipAction(schema.getTypes());
+            case RECORD -> new RecordSkipAction(schema.getFields());
+        };
+    }
+
+    private static class ArraySkipAction
+            implements SkipAction
+    {
+        private final SkipAction elementSkipAction;
+
+        public ArraySkipAction(Schema elementSchema)
+        {
+            elementSkipAction = createSkipActionForSchema(requireNonNull(elementSchema, "elementSchema is null"));
+        }
+
+        @Override
+        public void skip(Decoder decoder)
+                throws IOException
+        {
+            for (long i = decoder.skipArray(); i != 0; i = decoder.skipArray()) {
+                for (long j = 0; j < i; j++) {
+                    elementSkipAction.skip(decoder);
+                }
+            }
+        }
+    }
+
+    private static class MapSkipAction
+            implements SkipAction
+    {
+        private final SkipAction valueSkipAction;
+
+        public MapSkipAction(Schema valueSchema)
+        {
+            this.valueSkipAction = createSkipActionForSchema(requireNonNull(valueSchema, "valueSchema is null"));
+        }
+
+        @Override
+        public void skip(Decoder decoder)
+                throws IOException
+        {
+            for (long i = decoder.skipMap(); i != 0; i = decoder.skipMap()) {
+                for (long j = 0; j < i; j++) {
+                    decoder.skipString(); // key
+                    valueSkipAction.skip(decoder); // value
+                }
+            }
+        }
+    }
+
+    private static class UnionSkipAction
+            implements SkipAction
+    {
+        private final SkipAction[] skipActions;
+
+        private UnionSkipAction(List<Schema> types)
+        {
+            skipActions = new SkipAction[requireNonNull(types, "types is null").size()];
+            for (int i = 0; i < types.size(); i++) {
+                skipActions[i] = createSkipActionForSchema(types.get(i));
+            }
+        }
+
+        @Override
+        public void skip(Decoder decoder)
+                throws IOException
+        {
+            skipActions[decoder.readIndex()].skip(decoder);
+        }
+    }
+
+    private static class RecordSkipAction
+            implements SkipAction
+    {
+        private final SkipAction[] fieldSkips;
+
+        public RecordSkipAction(List<Schema.Field> fields)
+        {
+            fieldSkips = new SkipAction[requireNonNull(fields, "fields is null").size()];
+            for (int i = 0; i < fields.size(); i++) {
+                fieldSkips[i] = createSkipActionForSchema(fields.get(i).schema());
+            }
+        }
+
+        @Override
+        public void skip(Decoder decoder)
+                throws IOException
+        {
+            for (SkipAction fieldSkipAction : fieldSkips) {
+                fieldSkipAction.skip(decoder);
+            }
         }
     }
 
@@ -221,13 +328,12 @@ public class AvroPageDataReader
         RowBuildingAction[] buildSteps;
 
         private RowBlockBuildingDecoder(Schema writeSchema, Schema readSchema, AvroTypeManager typeManager)
-                throws IOException
         {
             this(Resolver.resolve(writeSchema, readSchema, new GenericData()), typeManager);
         }
 
         private RowBlockBuildingDecoder(Resolver.Action action, AvroTypeManager typeManager)
-                throws IOException
+
         {
             if (action instanceof Resolver.ErrorAction errorAction) {
                 throw new RuntimeException("Error in resolution of types for row building: " + errorAction.error);
@@ -260,7 +366,7 @@ public class AvroPageDataReader
                 verify(Arrays.stream(buildSteps).mapToInt(RowBuildingAction::getOutputChannel).filter(a -> a >= 0).distinct().count() == (long) recordAdjust.reader.getFields().size(), "Every channel in output block builder must be accounted for");
             }
             else {
-                throw new RuntimeException("Write and Read Schemas must be records when building a row block building decoder");
+                throw new AvroTypeException("Write and Read Schemas must be records when building a row block building decoder");
             }
         }
 
@@ -269,7 +375,7 @@ public class AvroPageDataReader
                 throws IOException
         {
             SingleRowBlockWriter currentBuilder = (SingleRowBlockWriter) builder.beginBlockEntry();
-            decodeIntoField(decoder, currentBuilder::getFieldBlockBuilder);
+            decodeIntoBlockProvided(decoder, currentBuilder::getFieldBlockBuilder);
             builder.closeEntry();
         }
 
@@ -277,23 +383,25 @@ public class AvroPageDataReader
                 throws IOException
         {
             builder.declarePosition();
-            decodeIntoField(decoder, builder::getBlockBuilder);
+            decodeIntoBlockProvided(decoder, builder::getBlockBuilder);
         }
 
-        protected void decodeIntoField(Decoder decoder, IntFunction<BlockBuilder> fieldBuilders)
+        protected void decodeIntoBlockProvided(Decoder decoder, IntFunction<BlockBuilder> fieldBuilders)
                 throws IOException
         {
             for (int i = 0; i < buildSteps.length; i++) {
-                switch (buildSteps[i]) {
-                    case SkipSchemaBuildingAction skipSchemaBuildingAction -> {
-                        skipSchemaBuildingAction.skip(decoder);
-                    }
-                    case BuildIntoBlockAction buildIntoBlockAction -> {
-                        buildIntoBlockAction.decode(decoder, fieldBuilders);
-                    }
-                    case ConstantBlockAction constantBlockAction -> {
-                        constantBlockAction.addConstant(fieldBuilders);
-                    }
+                // TODO replace with switch sealed class syntax when stable
+                if (buildSteps[i] instanceof SkipSchemaBuildingAction skipSchemaBuildingAction) {
+                    skipSchemaBuildingAction.skip(decoder);
+                }
+                else if (buildSteps[i] instanceof BuildIntoBlockAction buildIntoBlockAction) {
+                    buildIntoBlockAction.decode(decoder, fieldBuilders);
+                }
+                else if (buildSteps[i] instanceof ConstantBlockAction constantBlockAction) {
+                    constantBlockAction.addConstant(fieldBuilders);
+                }
+                else {
+                    throw new IllegalStateException("Unhandled buildingAction");
                 }
             }
         }
@@ -306,7 +414,6 @@ public class AvroPageDataReader
         private final BlockBuildingDecoder valueBlockBuildingDecoder;
 
         public MapBlockBuildingDecoder(Resolver.Container containerAction, AvroTypeManager typeManager)
-                throws IOException
         {
             requireNonNull(containerAction, "containerAction is null");
             verify(containerAction.reader.getType() == Schema.Type.MAP, "Reader schema must be a map");
@@ -339,7 +446,6 @@ public class AvroPageDataReader
         private final BlockBuildingDecoder elementBlockBuildingDecoder;
 
         public ArrayBlockBuildingDecoder(Resolver.Container containerAction, AvroTypeManager typeManager)
-                throws IOException
         {
             requireNonNull(containerAction, "containerAction is null");
             verify(containerAction.reader.getType() == Schema.Type.ARRAY, "Reader schema must be a array");
@@ -574,7 +680,6 @@ public class AvroPageDataReader
         private final BlockBuildingDecoder[] blockBuildingDecoders;
 
         public WriterUnionBlockBuildingDecoder(Resolver.WriterUnion writerUnion, AvroTypeManager typeManager)
-                throws IOException
         {
             blockBuildingDecoders = new BlockBuildingDecoder[writerUnion.actions.length];
             for (int i = 0; i < writerUnion.actions.length; i++) {
@@ -599,11 +704,15 @@ public class AvroPageDataReader
         DatumReader<Object> datumReader;
 
         public UserDefinedBlockBuildingDecoder(Schema readerSchema, Schema writerSchema, BiConsumer<BlockBuilder, Object> userBuilderFunction)
-                throws IOException
         {
             requireNonNull(readerSchema, "readerSchema is null");
             requireNonNull(writerSchema, "writerSchema is null");
-            this.datumReader = fastReaderBuilder.createDatumReader(writerSchema, readerSchema);
+            try {
+                this.datumReader = fastReaderBuilder.createDatumReader(writerSchema, readerSchema);
+            }
+            catch (IOException ioException) {
+                throw new AvroTypeException("Unable to decode default value in schema " + readerSchema.toString(), ioException);
+            }
             this.userBuilderFunction = requireNonNull(userBuilderFunction, "userBuilderFunction is null");
         }
 
@@ -616,7 +725,7 @@ public class AvroPageDataReader
     }
 
     private static BlockBuildingDecoder createBlockBuildingDecoderForAction(Resolver.Action action, AvroTypeManager typeManager)
-            throws IOException
+
     {
         Optional<BiConsumer<BlockBuilder, Object>> consumer = typeManager.overrideBuildingFunctionForSchema(action.reader);
         if (consumer.isPresent()) {
@@ -741,7 +850,6 @@ public class AvroPageDataReader
     }
 
     private static IoConsumer<BlockBuilder> getDefaultBlockBuilder(Schema.Field field, AvroTypeManager typeManager)
-            throws IOException
     {
         BlockBuildingDecoder buildingDecoder = createBlockBuildingDecoderForAction(Resolver.resolve(field.schema(), field.schema()), typeManager);
         byte[] defaultBytes = getDefaultByes(field);
@@ -750,12 +858,16 @@ public class AvroPageDataReader
     }
 
     private static byte[] getDefaultByes(Schema.Field field)
-            throws IOException
     {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        Encoder e = EncoderFactory.get().binaryEncoder(out, null);
-        ResolvingGrammarGenerator.encode(e, field.schema(), Accessor.defaultValue(field));
-        e.flush();
-        return out.toByteArray();
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            Encoder e = EncoderFactory.get().binaryEncoder(out, null);
+            ResolvingGrammarGenerator.encode(e, field.schema(), Accessor.defaultValue(field));
+            e.flush();
+            return out.toByteArray();
+        }
+        catch (IOException exception) {
+            throw new AvroTypeException("Unable to encode to bytes for default value in field " + field, exception);
+        }
     }
 }

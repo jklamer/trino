@@ -32,8 +32,8 @@ import static com.google.common.collect.ImmutableMap.toImmutableMap;
 public class AvroFilePageIterator
         implements Iterator<Page>
 {
-    private AvroPageDataReader dataReader;
-    private DataFileReader<Optional<Page>> fileReader;
+    private final AvroPageDataReader dataReader;
+    private final DataFileReader<Optional<Page>> fileReader;
     private Optional<Page> nextPage = Optional.empty();
 
     // Calling class responsible for closing input stream
@@ -68,16 +68,12 @@ public class AvroFilePageIterator
                 nextPage = fileReader.next();
             }
             catch (AvroRuntimeException runtimeException) {
+                // TODO determine best throw type
                 throw new UncheckedIOException((IOException) runtimeException.getCause());
             }
         }
         if (nextPage.isEmpty()) {
-            try {
-                nextPage = dataReader.flush();
-            }
-            catch (IOException ioException) {
-                throw new UncheckedIOException(ioException);
-            }
+            nextPage = dataReader.flush();
         }
     }
 }

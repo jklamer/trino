@@ -63,9 +63,9 @@ public class AvroTypeUtils
             case ARRAY -> new ArrayType(typeFromAvro(schema.getElementType(), avroTypeManager, enclosingRecords));
             case MAP -> new MapType(VarcharType.VARCHAR, typeFromAvro(schema.getValueType(), avroTypeManager, enclosingRecords), new TypeOperators());
             case UNION ->
-                    typeFromAvro(unwrapNullableUnion(schema).orElseThrow(() -> new UnsupportedOperationException("Unable to make Trino Type from Avro Union: %s".formatted(schema))), avroTypeManager, enclosingRecords);
-            case FIXED -> VarbinaryType.VARBINARY;
-            case STRING, BYTES -> VarcharType.VARCHAR;
+                    typeFromAvro(unwrapNullableUnion(schema).orElseThrow(() -> new UnsupportedOperationException("Unable to make Trino Type from non nullable Avro Union: %s".formatted(schema))), avroTypeManager, enclosingRecords);
+            case FIXED, BYTES -> VarbinaryType.VARBINARY;
+            case STRING -> VarcharType.VARCHAR;
             case INT -> IntegerType.INTEGER;
             case LONG -> BigintType.BIGINT;
             case FLOAT -> RealType.REAL;
@@ -75,7 +75,7 @@ public class AvroTypeUtils
         });
     }
 
-    private static Optional<Schema> unwrapNullableUnion(Schema schema)
+    public static Optional<Schema> unwrapNullableUnion(Schema schema)
     {
         verify(schema.isUnion());
         if (schema.isNullable() && schema.getTypes().size() == 2) {

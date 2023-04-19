@@ -16,6 +16,7 @@ package io.trino.plugin.hive.avro;
 import io.airlift.slice.Slices;
 import io.trino.hive.formats.avro.AvroNativeLogicalTypeManager;
 import io.trino.spi.block.BlockBuilder;
+import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.Chars;
 import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.Timestamps;
@@ -35,9 +36,9 @@ import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 
-import static io.trino.plugin.hive.avro.HiveAvroConstants.CHAR_TYPE_LOGICAL_NAME;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.VARCHAR_AND_CHAR_LOGICAL_TYPE_LENGTH_PROP;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.VARCHAR_TYPE_LOGICAL_NAME;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.CHAR_TYPE_LOGICAL_NAME;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.VARCHAR_AND_CHAR_LOGICAL_TYPE_LENGTH_PROP;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.VARCHAR_TYPE_LOGICAL_NAME;
 import static io.trino.spi.type.CharType.createCharType;
 import static io.trino.spi.type.VarcharType.createVarcharType;
 import static java.time.ZoneOffset.UTC;
@@ -58,8 +59,8 @@ public class HiveAvroTypeManager
     @Override
     public void configure(Map<String, byte[]> fileMetaData)
     {
-        if (fileMetaData.containsKey(HiveAvroConstants.WRITER_TIME_ZONE)) {
-            convertToTimezone.set(ZoneId.of(new String(fileMetaData.get(HiveAvroConstants.WRITER_TIME_ZONE), StandardCharsets.UTF_8)));
+        if (fileMetaData.containsKey(AvroHiveConstants.WRITER_TIME_ZONE)) {
+            convertToTimezone.set(ZoneId.of(new String(fileMetaData.get(AvroHiveConstants.WRITER_TIME_ZONE), StandardCharsets.UTF_8)));
         }
         else if (!skipConversion) {
             convertToTimezone.set(TimeZone.getDefault().toZoneId());
@@ -69,21 +70,31 @@ public class HiveAvroTypeManager
     @Override
     public Optional<Type> overrideTypeForSchema(Schema schema)
     {
+        if (schema.getType().equals(Schema.Type.NULL)) {
+            // allows of dereference when no base columns from file used
+            // BooleanType chosen rather arbitrarily to be stuffed with null
+            return Optional.of(BooleanType.BOOLEAN);
+        }
         ValidateLogicalTypeResult result = validateLogicalType(schema);
-        return switch (result) {
-            // mapped in from HiveType translator
-            case AvroNativeLogicalTypeManager.NoLogicalType ignored -> Optional.empty();
-            case AvroNativeLogicalTypeManager.NotNativeAvroLogicalType notNativeAvroLogicalType -> {
-                if (!notNativeAvroLogicalType.getLogicalTypeName().equals(VARCHAR_TYPE_LOGICAL_NAME) && !notNativeAvroLogicalType.getLogicalTypeName().equals(CHAR_TYPE_LOGICAL_NAME)) {
-                    yield Optional.empty();
-                }
-                yield Optional.of(getHiveLogicalVarCharOrCharType(schema, notNativeAvroLogicalType));
-            }
-            case AvroNativeLogicalTypeManager.InvalidNativeAvroLogicalType invalidNativeAvroLogicalType -> switch (invalidNativeAvroLogicalType.getLogicalTypeName()) {
+        // mapped in from HiveType translator
+        // TODO replace with sealed class case match syntax when stable
+        if (result instanceof AvroNativeLogicalTypeManager.NoLogicalType ignored) {
+            return Optional.empty();
+        }
+        if (result instanceof NonNativeAvroLogicalType nonNativeAvroLogicalType) {
+            return switch (nonNativeAvroLogicalType.getLogicalTypeName()) {
+                case VARCHAR_TYPE_LOGICAL_NAME, CHAR_TYPE_LOGICAL_NAME -> Optional.of(getHiveLogicalVarCharOrCharType(schema, nonNativeAvroLogicalType));
+                default -> Optional.empty();
+            };
+        }
+        if (result instanceof AvroNativeLogicalTypeManager.InvalidNativeAvroLogicalType invalidNativeAvroLogicalType) {
+            return switch (invalidNativeAvroLogicalType.getLogicalTypeName()) {
                 case TIMESTAMP_MILLIS, DATE, DECIMAL -> throw invalidNativeAvroLogicalType.getCause();
                 default -> Optional.empty(); // Other logical types ignored by hive/don't map to hive types
             };
-            case AvroNativeLogicalTypeManager.ValidNativeAvroLogicalType validNativeAvroLogicalType -> switch (validNativeAvroLogicalType.getLogicalType().getName()) {
+        }
+        if (result instanceof AvroNativeLogicalTypeManager.ValidNativeAvroLogicalType validNativeAvroLogicalType) {
+            return switch (validNativeAvroLogicalType.getLogicalType().getName()) {
                 case TIMESTAMP_MILLIS, DATE -> super.overrideTypeForSchema(schema);
                 case DECIMAL -> {
                     if (schema.getType().equals(Schema.Type.FIXED)) {
@@ -94,36 +105,45 @@ public class HiveAvroTypeManager
                 }
                 default -> Optional.empty(); // Other logical types ignored by hive/don't map to hive types
             };
-        };
+        }
+        throw new IllegalStateException("Unhandled validate logical type result");
     }
 
     @Override
     public Optional<BiConsumer<BlockBuilder, Object>> overrideBuildingFunctionForSchema(Schema schema)
     {
         ValidateLogicalTypeResult result = validateLogicalType(schema);
-        return switch (result) {
-            case AvroNativeLogicalTypeManager.NoLogicalType ignored -> Optional.empty();
-            case AvroNativeLogicalTypeManager.NotNativeAvroLogicalType notNativeAvroLogicalType -> {
-                if (!notNativeAvroLogicalType.getLogicalTypeName().equals(VARCHAR_TYPE_LOGICAL_NAME) && !notNativeAvroLogicalType.getLogicalTypeName().equals(CHAR_TYPE_LOGICAL_NAME)) {
-                    yield Optional.empty();
+        // TODO replace with sealed class case match syntax when stable
+
+        if (result instanceof AvroNativeLogicalTypeManager.NoLogicalType ignored) {
+            return Optional.empty();
+        }
+        if (result instanceof NonNativeAvroLogicalType nonNativeAvroLogicalType) {
+            return switch (nonNativeAvroLogicalType.getLogicalTypeName()) {
+                case VARCHAR_TYPE_LOGICAL_NAME, CHAR_TYPE_LOGICAL_NAME -> {
+                    Type type = getHiveLogicalVarCharOrCharType(schema, nonNativeAvroLogicalType);
+                    if (nonNativeAvroLogicalType.getLogicalTypeName().equals(VARCHAR_TYPE_LOGICAL_NAME)) {
+                        yield Optional.of(((blockBuilder, obj) -> {
+                            type.writeSlice(blockBuilder, Varchars.truncateToLength(Slices.utf8Slice(obj.toString()), type));
+                        }));
+                    }
+                    else {
+                        yield Optional.of(((blockBuilder, obj) -> {
+                            type.writeSlice(blockBuilder, Chars.truncateToLengthAndTrimSpaces(Slices.utf8Slice(obj.toString()), type));
+                        }));
+                    }
                 }
-                Type type = getHiveLogicalVarCharOrCharType(schema, notNativeAvroLogicalType);
-                if (notNativeAvroLogicalType.getLogicalTypeName().equals(VARCHAR_TYPE_LOGICAL_NAME)) {
-                    yield Optional.of(((blockBuilder, obj) -> {
-                        type.writeSlice(blockBuilder, Varchars.truncateToLength(Slices.utf8Slice(obj.toString()), type));
-                    }));
-                }
-                else {
-                    yield Optional.of(((blockBuilder, obj) -> {
-                        type.writeSlice(blockBuilder, Chars.truncateToLengthAndTrimSpaces(Slices.utf8Slice(obj.toString()), type));
-                    }));
-                }
-            }
-            case AvroNativeLogicalTypeManager.InvalidNativeAvroLogicalType invalidNativeAvroLogicalType -> switch (invalidNativeAvroLogicalType.getLogicalTypeName()) {
+                default -> Optional.empty();
+            };
+        }
+        if (result instanceof AvroNativeLogicalTypeManager.InvalidNativeAvroLogicalType invalidNativeAvroLogicalType) {
+            return switch (invalidNativeAvroLogicalType.getLogicalTypeName()) {
                 case TIMESTAMP_MILLIS, DATE, DECIMAL -> throw invalidNativeAvroLogicalType.getCause();
                 default -> Optional.empty(); // Other logical types ignored by hive/don't map to hive types
             };
-            case AvroNativeLogicalTypeManager.ValidNativeAvroLogicalType validNativeAvroLogicalType -> switch (validNativeAvroLogicalType.getLogicalType().getName()) {
+        }
+        if (result instanceof AvroNativeLogicalTypeManager.ValidNativeAvroLogicalType validNativeAvroLogicalType) {
+            return switch (validNativeAvroLogicalType.getLogicalType().getName()) {
                 case TIMESTAMP_MILLIS -> {
                     yield Optional.of(((blockBuilder, obj) -> {
                         Long millisSinceEpochUTC = (Long) obj;
@@ -140,17 +160,18 @@ public class HiveAvroTypeManager
                 }
                 default -> Optional.empty(); // Other logical types ignored by hive/don't map to hive types
             };
-        };
+        }
+        throw new IllegalStateException("Unhandled validate logical type result");
     }
 
-    private static Type getHiveLogicalVarCharOrCharType(Schema schema, NotNativeAvroLogicalType notNativeAvroLogicalType)
+    private static Type getHiveLogicalVarCharOrCharType(Schema schema, NonNativeAvroLogicalType nonNativeAvroLogicalType)
     {
         if (!schema.getType().equals(Schema.Type.STRING)) {
             throw new AvroTypeException("Unsupported Avro type for Hive Logical Type in schema " + schema.toString());
         }
         Object maxLengthObject = schema.getObjectProp(VARCHAR_AND_CHAR_LOGICAL_TYPE_LENGTH_PROP);
         if (maxLengthObject == null) {
-            throw new AvroTypeException("Missing property maxLength in schema for Hive Type " + notNativeAvroLogicalType.getLogicalTypeName());
+            throw new AvroTypeException("Missing property maxLength in schema for Hive Type " + nonNativeAvroLogicalType.getLogicalTypeName());
         }
         try {
             int maxLength = 0;
@@ -163,7 +184,7 @@ public class HiveAvroTypeManager
             else {
                 throw new AvroTypeException("Unrecognized property type for " + VARCHAR_AND_CHAR_LOGICAL_TYPE_LENGTH_PROP + " in schema " + schema);
             }
-            if (notNativeAvroLogicalType.getLogicalTypeName().equals(VARCHAR_TYPE_LOGICAL_NAME)) {
+            if (nonNativeAvroLogicalType.getLogicalTypeName().equals(VARCHAR_TYPE_LOGICAL_NAME)) {
                 return createVarcharType(maxLength);
             }
             else {

@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.hive.avro;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import io.airlift.slice.Slices;
 import io.airlift.units.DataSize;
@@ -36,19 +37,31 @@ import io.trino.spi.connector.EmptyPageSource;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.TypeManager;
 import org.apache.avro.Schema;
+import org.apache.avro.SchemaBuilder;
+import org.apache.avro.util.internal.Accessor;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Properties;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Strings.nullToEmpty;
+import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static io.trino.hive.formats.avro.AvroTypeUtils.unwrapNullableUnion;
 import static io.trino.plugin.hive.HiveErrorCode.HIVE_CANNOT_OPEN_SPLIT;
 import static io.trino.plugin.hive.HivePageSourceProvider.projectBaseColumns;
 import static io.trino.plugin.hive.HiveSessionProperties.isAvroNativeReaderEnabled;
@@ -57,6 +70,7 @@ import static io.trino.plugin.hive.util.HiveClassNames.AVRO_SERDE_CLASS;
 import static io.trino.plugin.hive.util.HiveUtil.getDeserializerClassName;
 import static io.trino.plugin.hive.util.HiveUtil.splitError;
 import static java.lang.Math.min;
+import static java.util.function.Predicate.not;
 
 public class AvroHivePageSourceFactory
         implements HivePageSourceFactory
@@ -110,9 +124,9 @@ public class AvroHivePageSourceFactory
         TrinoFileSystem trinoFileSystem = new HdfsFileSystemFactory(hdfsEnvironment).create(session.getIdentity());
         TrinoInputFile inputFile = new MonitoredTrinoInputFile(stats, trinoFileSystem.newInputFile(path.toString()));
 
-        Schema avroSchema;
+        Schema tableSchema;
         try {
-            avroSchema = AvroHiveFileUtils.determineSchemaOrThrowException(trinoFileSystem, configuration, schema);
+            tableSchema = AvroHiveFileUtils.determineSchemaOrThrowException(trinoFileSystem, configuration, schema);
         }
         catch (IOException e) {
             throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, "Unable to load or parse schema", e);
@@ -146,11 +160,64 @@ public class AvroHivePageSourceFactory
             return Optional.of(noProjectionAdaptation(new EmptyPageSource()));
         }
 
+        Schema maskedSchema = maskColumnsFromTableSchema(projectedReaderColumns, tableSchema);
+        if (maskedSchema.getFields().isEmpty()) {
+            // no non-masked columns to select from partition schema
+            // hack to return null rows with same number as underlying data source
+            // will error if UUID is same name as base column for underlying storage table but should never
+            // return false data
+            SchemaBuilder.FieldAssembler<Schema> nullSchema = SchemaBuilder.record("null_only").fields();
+            for (int i = 0; i < Math.max(projectedReaderColumns.size(), 1); i++) {
+                String notAColumnName;
+                while (Objects.nonNull(tableSchema.getField((notAColumnName = "f"+UUID.randomUUID().toString().replace('-', '_'))))) {
+                }
+                nullSchema = nullSchema.name(notAColumnName).type(Schema.create(Schema.Type.NULL)).withDefault(null);
+            }
+            try {
+                return Optional.of(new ReaderPageSource(new AvroHivePageSource(inputFile, nullSchema.endRecord(), new HiveAvroTypeManager(configuration), start, length), readerProjections));
+            }
+            catch (IOException e) {
+                throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, e);
+            }
+        }
+
         try {
-            return Optional.of(new ReaderPageSource(new AvroHivePageSource(inputFile, avroSchema, new HiveAvroTypeManager(configuration), start, length), readerProjections));
+            return Optional.of(new ReaderPageSource(new AvroHivePageSource(inputFile, maskedSchema, new HiveAvroTypeManager(configuration), start, length), readerProjections));
         }
         catch (IOException e) {
             throw new TrinoException(HIVE_CANNOT_OPEN_SPLIT, e);
         }
+    }
+
+    private Schema maskColumnsFromTableSchema(List<HiveColumnHandle> columns, Schema tableSchema)
+    {
+        verify(tableSchema.getType() == Schema.Type.RECORD);
+        Set<String> maskedColumns = columns.stream().map(HiveColumnHandle::getBaseColumnName).collect(toImmutableSet());
+        Map<String, List<HiveColumnHandle>> rowFieldMasking = ImmutableMap.copyOf(columns.stream().filter(not(HiveColumnHandle::isBaseColumn)).collect(Collectors.groupingBy(HiveColumnHandle::getBaseColumnName)));
+
+        SchemaBuilder.FieldAssembler<Schema> maskedSchema = SchemaBuilder.builder()
+            .record(tableSchema.getName())
+            .namespace(tableSchema.getNamespace())
+            .fields();
+
+        for (Schema.Field field : tableSchema.getFields()) {
+            if (maskedColumns.contains(field.name())) {
+                maskedSchema = maskedSchema
+                        .name(field.name())
+                        .aliases(field.aliases().toArray(String[]::new))
+                        .doc(field.doc())
+                        .type(field.schema())
+                        //.type(rowFieldMasking.containsKey(field.name()) ? maskRowField(rowFieldMasking.get(field.name()), field.schema(), 0) : field.schema())
+                        .withDefault(Accessor.defaultValue(field));
+            }
+        }
+        return maskedSchema.endRecord();
+    }
+
+
+    private Schema maskRowField(List<HiveColumnHandle> columns, Schema field, int level)
+    {
+        Schema unwrapped = field.isUnion() ? unwrapNullableUnion(field).orElseThrow(() -> new UnsupportedOperationException("Unable to handle non nullable")) : field;
+        return field;
     }
 }

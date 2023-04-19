@@ -13,9 +13,9 @@
  */
 package io.trino.plugin.hive.avro;
 
-public final class HiveAvroConstants
+public final class AvroHiveConstants
 {
-    private HiveAvroConstants() {}
+    private AvroHiveConstants() {}
 
     // Job configuration keys
     public static final String OUTPUT_CODEC_JOB_CONF = "avro.output.codec";

@@ -19,12 +19,21 @@ import org.testng.annotations.Test;
 import java.util.Arrays;
 import java.util.concurrent.ThreadLocalRandom;
 
+import static com.google.common.base.Verify.verify;
 import static io.trino.hive.formats.avro.AvroNativeLogicalTypeManager.fromBigEndian;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 public class TestLongFromBigEndian
 {
+    @Test
+    public void testArrays()
+    {
+        assertThat(fromBigEndian(new byte[] {(byte) 0xFF, (byte) 0xFF})).isEqualTo(-1);
+        assertThat(fromBigEndian(new byte[] {0, 0, 0, 0, 0, 0, (byte) 0xFF, (byte) 0xFF})).isEqualTo(65535);
+        assertThat(fromBigEndian(new byte[] {(byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0x80, 0, 0, 0, 0, 0, 0, 0})).isEqualTo(Long.MIN_VALUE);
+    }
+
     @Test
     public void testIdentity()
     {
@@ -52,17 +61,12 @@ public class TestLongFromBigEndian
         long f = 64L;
         long g = -64L;
 
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < 8; i++) {
             assertThat(fromBigEndian(Arrays.copyOfRange(Longs.toByteArray(a), i, 8))).isEqualTo(a);
             assertThat(fromBigEndian(Arrays.copyOfRange(Longs.toByteArray(b), i, 8))).isEqualTo(b);
             assertThat(fromBigEndian(Arrays.copyOfRange(Longs.toByteArray(c), i, 8))).isEqualTo(c);
             assertThat(fromBigEndian(Arrays.copyOfRange(Longs.toByteArray(d), i, 8))).isEqualTo(d);
             assertThat(fromBigEndian(Arrays.copyOfRange(Longs.toByteArray(e), i, 8))).isEqualTo(e);
-        }
-        assertThat(fromBigEndian(Arrays.copyOfRange(Longs.toByteArray(c), 7, 8))).isEqualTo(c);
-        assertThat(fromBigEndian(Arrays.copyOfRange(Longs.toByteArray(d), 7, 8))).isEqualTo(d);
-        assertThat(fromBigEndian(Arrays.copyOfRange(Longs.toByteArray(e), 7, 8))).isEqualTo(e);
-        for (int i = 0; i <= 4; i++) {
             assertThat(fromBigEndian(Arrays.copyOfRange(Longs.toByteArray(f), i, 8))).isEqualTo(f);
             assertThat(fromBigEndian(Arrays.copyOfRange(Longs.toByteArray(g), i, 8))).isEqualTo(g);
         }
@@ -70,6 +74,7 @@ public class TestLongFromBigEndian
 
     public static byte[] padBigEndianCorrectly(long toPad, int totalSize)
     {
+        verify(totalSize >= 8);
         byte[] longBytes = Longs.toByteArray(toPad);
 
         byte[] padded = new byte[totalSize];

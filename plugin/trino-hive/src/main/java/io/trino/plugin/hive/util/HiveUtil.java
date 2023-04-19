@@ -524,6 +524,7 @@ public final class HiveUtil
         try {
             configuration = copy(configuration); // Some SerDes (e.g. Avro) modify passed configuration
             deserializer.initialize(configuration, schema);
+            ((TrinoAvroSerDe) deserializer).determineSchemaOrReturnErrorSchema(configuration, schema);
             validate(deserializer);
         }
         catch (SerDeException | RuntimeException e) {

@@ -141,16 +141,20 @@ public class AvroNativeLogicalTypeManager
                     }
                     default -> throw new IllegalStateException("Unreachable unfiltered logical type");
                 };
-                yield switch (decimalType) {
-                        case io.trino.spi.type.LongDecimalType longDecimalType -> {
-                            yield (builder, obj) -> {
-                                longDecimalType.writeObject(builder, Int128.fromBigEndian(byteExtract.apply(obj)));
-                            }; }
-                        case io.trino.spi.type.ShortDecimalType shortDecimalType -> {
-                            yield (builder, obj) -> {
-                                shortDecimalType.writeLong(builder, fromBigEndian(byteExtract.apply(obj)));
-                            }; }
+                // TODO replace with switch sealed class syntax when stable
+                if (decimalType instanceof io.trino.spi.type.LongDecimalType longDecimalType) {
+                    yield (builder, obj) -> {
+                        longDecimalType.writeObject(builder, Int128.fromBigEndian(byteExtract.apply(obj)));
                     };
+                }
+                else if (decimalType instanceof io.trino.spi.type.ShortDecimalType shortDecimalType) {
+                    yield (builder, obj) -> {
+                        shortDecimalType.writeLong(builder, fromBigEndian(byteExtract.apply(obj)));
+                    };
+                }
+                else {
+                    throw new IllegalStateException("Unhandled decimal type");
+                }
             }
             case DATE -> switch (schema.getType()) {
                 case INT -> {
@@ -193,17 +197,17 @@ public class AvroNativeLogicalTypeManager
     }
 
     protected abstract sealed class ValidateLogicalTypeResult
-            permits NoLogicalType, NotNativeAvroLogicalType, InvalidNativeAvroLogicalType, ValidNativeAvroLogicalType {}
+            permits NoLogicalType, NonNativeAvroLogicalType, InvalidNativeAvroLogicalType, ValidNativeAvroLogicalType {}
 
     protected final class NoLogicalType
             extends ValidateLogicalTypeResult {}
 
-    protected final class NotNativeAvroLogicalType
+    protected final class NonNativeAvroLogicalType
             extends ValidateLogicalTypeResult
     {
         protected final String logicalTypeName;
 
-        public NotNativeAvroLogicalType(String logicalTypeName)
+        public NonNativeAvroLogicalType(String logicalTypeName)
         {
             this.logicalTypeName = requireNonNull(logicalTypeName, "logicalTypeName is null");
         }
@@ -255,21 +259,23 @@ public class AvroNativeLogicalTypeManager
 
     private <T> Optional<T> validateAndProduceFromName(Schema schema, Function<LogicalType, T> produce)
     {
+        // TODO replace with swtich sealed class syntax when stable
         ValidateLogicalTypeResult logicalTypeResult = validateLogicalType(schema);
-        return switch (logicalTypeResult) {
-            case NoLogicalType ignored -> Optional.empty();
-            case NotNativeAvroLogicalType ignored -> {
-                log.warn("Unrecognized logical type " + schema);
-                yield Optional.empty();
-            }
-            case InvalidNativeAvroLogicalType invalidNativeAvroLogicalType -> {
-                log.error("Invalidly configured native avro logical type", invalidNativeAvroLogicalType.cause);
-                yield Optional.empty();
-            }
-            case ValidNativeAvroLogicalType validNativeAvroLogicalType -> {
-                yield Optional.of(produce.apply(validNativeAvroLogicalType.logicalType));
-            }
-        };
+        if (logicalTypeResult instanceof NoLogicalType ignored) {
+            return Optional.empty();
+        }
+        if (logicalTypeResult instanceof NonNativeAvroLogicalType ignored) {
+            log.warn("Unrecognized logical type " + schema);
+            return Optional.empty();
+        }
+        if (logicalTypeResult instanceof InvalidNativeAvroLogicalType invalidNativeAvroLogicalType) {
+            log.error("Invalidly configured native avro logical type", invalidNativeAvroLogicalType.cause);
+            return Optional.empty();
+        }
+        if (logicalTypeResult instanceof ValidNativeAvroLogicalType validNativeAvroLogicalType) {
+            return Optional.of(produce.apply(validNativeAvroLogicalType.logicalType));
+        }
+        throw new IllegalStateException("Unhandled validate logical type result");
     }
 
     protected ValidateLogicalTypeResult validateLogicalType(Schema schema)
@@ -286,7 +292,7 @@ public class AvroNativeLogicalTypeManager
             case LOCAL_TIMESTAMP_MICROS + LOCAL_TIMESTAMP_MILLIS:
                 log.warn("Logical type " + typeName + " not currently supported by by Trino");
             default:
-                return new NotNativeAvroLogicalType(typeName);
+                return new NonNativeAvroLogicalType(typeName);
         }
         // make sure the type is valid before returning it
         if (logicalType != null) {
@@ -299,7 +305,7 @@ public class AvroNativeLogicalTypeManager
             return new ValidNativeAvroLogicalType(logicalType);
         }
         else {
-            return new NotNativeAvroLogicalType(typeName);
+            return new NonNativeAvroLogicalType(typeName);
         }
     }
 
@@ -319,9 +325,10 @@ public class AvroNativeLogicalTypeManager
         if (bytes.length > 8) {
             int offset = bytes.length - Long.BYTES;
             long res = (long) BIG_ENDIAN_LONG_VIEW.get(bytes, offset);
-            long expectedLeadingBytes = res >> 63;
+            // verify that the bytes above 64 bits are simply proper sign extension
+            int expectedSignExtensionByte = (int) (res >> 63);
             for (int i = 0; i < offset; i++) {
-                if (bytes[i] != expectedLeadingBytes) {
+                if (bytes[i] != expectedSignExtensionByte) {
                     throw new ArithmeticException("Overflow");
                 }
             }

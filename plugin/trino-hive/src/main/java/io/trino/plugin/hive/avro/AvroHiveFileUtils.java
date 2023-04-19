@@ -40,18 +40,18 @@ import java.util.Properties;
 import java.util.Random;
 
 import static io.trino.plugin.hive.HiveMetadata.TABLE_COMMENT;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.AVRO_SERDE_SCHEMA;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.CHAR_TYPE_LOGICAL_NAME;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.DATE_TYPE_NAME;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.SCHEMA_DOC;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.SCHEMA_LITERAL;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.SCHEMA_NAME;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.SCHEMA_NAMESPACE;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.SCHEMA_NONE;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.SCHEMA_URL;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.TABLE_NAME;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.TIMESTAMP_TYPE_NAME;
-import static io.trino.plugin.hive.avro.HiveAvroConstants.VARCHAR_TYPE_LOGICAL_NAME;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.AVRO_SERDE_SCHEMA;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.CHAR_TYPE_LOGICAL_NAME;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.DATE_TYPE_NAME;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.SCHEMA_DOC;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.SCHEMA_LITERAL;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.SCHEMA_NAME;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.SCHEMA_NAMESPACE;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.SCHEMA_NONE;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.SCHEMA_URL;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.TABLE_NAME;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.TIMESTAMP_TYPE_NAME;
+import static io.trino.plugin.hive.avro.AvroHiveConstants.VARCHAR_TYPE_LOGICAL_NAME;
 import static io.trino.plugin.hive.util.HiveUtil.getColumnNames;
 import static io.trino.plugin.hive.util.HiveUtil.getColumnTypes;
 import static io.trino.plugin.hive.util.SerdeConstants.LIST_COLUMN_COMMENTS;
@@ -79,19 +79,20 @@ public final class AvroHiveFileUtils
                 throw new IOException("No avro schema file not found at " + schemaURL);
             }
             try (TrinoInputStream inputStream = schemaFile.newStream()) {
-                getSchemaParser().parse(inputStream);
+                return getSchemaParser().parse(inputStream);
             }
             catch (IOException ioException) {
                 throw new IOException("Unable to read avro schema file from given path: " + schemaURL, ioException);
             }
         }
-
-        Schema schema = getSchemaFromProperties(properties);
-        properties.setProperty(SCHEMA_LITERAL, schema.toString());
-        if (conf != null) {
-            conf.set(AVRO_SERDE_SCHEMA, schema.toString(false));
+        else {
+            Schema schema = getSchemaFromProperties(properties);
+            properties.setProperty(SCHEMA_LITERAL, schema.toString());
+            if (conf != null) {
+                conf.set(AVRO_SERDE_SCHEMA, schema.toString(false));
+            }
+            return schema;
         }
-        return schema;
     }
 
     private static Schema getSchemaFromProperties(Properties properties)
@@ -258,7 +259,7 @@ public final class AvroHiveFileUtils
                         .name(nestedField.name())
                         .doc(nestedField.doc())
                         .type(nestedField.schema())
-                        .noDefault();
+                        .withDefault(null);
             }
         }
         else {
@@ -266,26 +267,19 @@ public final class AvroHiveFileUtils
                     .name(fieldName)
                     .doc(doc)
                     .type(fieldSchema)
-                    .noDefault();
+                    .withDefault(null);
         }
         return fieldBuilder;
     }
 
-    private static Schema wrapInUnionWithNull(Schema schema)
+    public static Schema wrapInUnionWithNull(Schema schema)
     {
-        Schema wrappedSchema = schema;
-        switch (schema.getType()) {
-            case NULL:
-                break;
-            case UNION:
-                List<Schema> existingSchemas = removeDuplicateNullSchemas(schema.getTypes());
-                wrappedSchema = Schema.createUnion(existingSchemas);
-                break;
-            default:
-                wrappedSchema = Schema.createUnion(Arrays.asList(Schema.create(Schema.Type.NULL), schema));
-        }
 
-        return wrappedSchema;
+        return switch (schema.getType()) {
+            case NULL -> schema;
+            case UNION -> Schema.createUnion(removeDuplicateNullSchemas(schema.getTypes()));
+            default -> Schema.createUnion(Arrays.asList(Schema.create(Schema.Type.NULL), schema));
+        };
     }
 
     //TODO lift from testing code?
