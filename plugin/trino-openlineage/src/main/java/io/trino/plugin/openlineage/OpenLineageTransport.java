@@ -11,23 +11,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.pinot;
+package io.trino.plugin.openlineage;
 
-import org.junit.jupiter.api.parallel.Isolated;
-
-@Isolated
-public class TestPinotLatestNoGrpcConnectorSmokeTest
-        extends BasePinotConnectorSmokeTest
+public enum OpenLineageTransport
 {
-    @Override
-    protected boolean isSecured()
-    {
-        return false;
-    }
-
-    @Override
-    protected boolean isGrpcEnabled()
-    {
-        return false;
-    }
+    CONSOLE,
+    HTTP,
+    /**/
 }

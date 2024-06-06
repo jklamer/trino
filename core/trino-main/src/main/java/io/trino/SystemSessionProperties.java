@@ -207,10 +207,12 @@ public final class SystemSessionProperties
     public static final String MIN_INPUT_ROWS_PER_TASK = "min_input_rows_per_task";
     public static final String USE_EXACT_PARTITIONING = "use_exact_partitioning";
     public static final String USE_COST_BASED_PARTITIONING = "use_cost_based_partitioning";
+    public static final String PUSH_FILTER_INTO_VALUES_MAX_ROW_COUNT = "push_filter_into_values_max_row_count";
     public static final String FORCE_SPILLING_JOIN = "force_spilling_join";
     public static final String PAGE_PARTITIONING_BUFFER_POOL_SIZE = "page_partitioning_buffer_pool_size";
     public static final String IDLE_WRITER_MIN_DATA_SIZE_THRESHOLD = "idle_writer_min_data_size_threshold";
     public static final String CLOSE_IDLE_WRITERS_TRIGGER_DURATION = "close_idle_writers_trigger_duration";
+    public static final String COLUMNAR_FILTER_EVALUATION_ENABLED = "columnar_filter_evaluation_enabled";
 
     private final List<PropertyMetadata<?>> sessionProperties;
 
@@ -1056,10 +1058,20 @@ public final class SystemSessionProperties
                         "When enabled the cost based optimizer is used to determine if repartitioning the output of an already partitioned stage is necessary",
                         optimizerConfig.isUseCostBasedPartitioning(),
                         false),
+                integerProperty(
+                        PUSH_FILTER_INTO_VALUES_MAX_ROW_COUNT,
+                        "Maximum number of rows in values for which filter is pushed down into values",
+                        optimizerConfig.getPushFilterIntoValuesMaxRowCount(),
+                        false),
                 booleanProperty(
                         FORCE_SPILLING_JOIN,
                         "Force the usage of spliing join operator in favor of the non-spilling one, even if spill is not enabled",
                         featuresConfig.isForceSpillingJoin(),
+                        false),
+                booleanProperty(
+                        COLUMNAR_FILTER_EVALUATION_ENABLED,
+                        "Enables columnar evaluation of filters",
+                        featuresConfig.isColumnarFilterEvaluationEnabled(),
                         false),
                 integerProperty(PAGE_PARTITIONING_BUFFER_POOL_SIZE,
                         "Maximum number of free buffers in the per task partitioned page buffer pool. Setting this to zero effectively disables the pool",
@@ -1900,6 +1912,11 @@ public final class SystemSessionProperties
         return session.getSystemProperty(USE_COST_BASED_PARTITIONING, Boolean.class);
     }
 
+    public static int getPushFilterIntoValuesMaxRowCount(Session session)
+    {
+        return session.getSystemProperty(PUSH_FILTER_INTO_VALUES_MAX_ROW_COUNT, Integer.class);
+    }
+
     public static boolean isForceSpillingOperator(Session session)
     {
         return session.getSystemProperty(FORCE_SPILLING_JOIN, Boolean.class);
@@ -1918,5 +1935,10 @@ public final class SystemSessionProperties
     public static Duration getCloseIdleWritersTriggerDuration(Session session)
     {
         return session.getSystemProperty(CLOSE_IDLE_WRITERS_TRIGGER_DURATION, Duration.class);
+    }
+
+    public static boolean isColumnarFilterEvaluationEnabled(Session session)
+    {
+        return session.getSystemProperty(COLUMNAR_FILTER_EVALUATION_ENABLED, Boolean.class);
     }
 }
