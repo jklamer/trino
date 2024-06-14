@@ -22,6 +22,8 @@ import org.apache.avro.file.DataFileReader;
 import org.apache.avro.generic.GenericDatumReader;
 import org.apache.avro.generic.GenericFixed;
 import org.apache.avro.generic.GenericRecord;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 
 import java.io.File;
 import java.io.IOException;
@@ -34,8 +36,11 @@ import java.util.stream.Collectors;
 
 import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.MoreCollectors.onlyElement;
+import static java.util.Objects.requireNonNull;
 import static java.util.function.Predicate.not;
+import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS;
 
+@TestInstance(PER_CLASS)
 public class DebugDecimalTypes
 {
     private DebugDecimalTypes() {}
@@ -43,58 +48,70 @@ public class DebugDecimalTypes
     public static void main(String[] args)
             throws IOException
     {
-        String dataFile = System.getenv("AVRO_FILE");
-        String schemaFile = System.getenv("SCHEMA_FILE");
+        new DebugDecimalTypes().testDecimalTypesInFile();
+    }
+
+    @Test
+    public void testDecimalTypesInFile()
+            throws IOException
+    {
+        String dataFile = requireNonNull(System.getenv("AVRO_FILE"), "Define avro data file path in env variable AVRO_FILE");
+        String schemaFile = requireNonNull(System.getenv("SCHEMA_FILE"), "Define avro schema file path in env variable SCHEMA_FILE");
         Schema schema = new Schema.Parser().parse(new File(schemaFile));
 
         DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(new File(dataFile), new GenericDatumReader<>(schema));
-        Schema fileSchema = dataFileReader.getSchema();
+        try {
+            Schema fileSchema = dataFileReader.getSchema();
 
-        List<Schema.Field> readDecimalFields = getDecimalFields(schema);
-        List<Schema.Field> actualDecimalFields = getDecimalFields(fileSchema);
+            List<Schema.Field> readDecimalFields = getDecimalFields(schema);
+            List<Schema.Field> actualDecimalFields = getDecimalFields(fileSchema);
 
-        if (!schema.equals(fileSchema)) {
-            System.out.println("Schema used to read file is not same as schema read from file");
-            System.out.println("Provided Schema");
-            System.out.println(schema.toString(true));
-            System.out.println("File Schema");
-            System.out.println(fileSchema.toString(true));
+            if (!schema.equals(fileSchema)) {
+                System.out.println("Schema used to read file is not same as schema read from file");
+                System.out.println("Provided Schema");
+                System.out.println(schema.toString(true));
+                System.out.println("File Schema");
+                System.out.println(fileSchema.toString(true));
 
-            if (!readDecimalFields.equals(actualDecimalFields)) {
-                Set<String> readDecimalsOnly = Sets.difference(readDecimalFields.stream().map(Schema.Field::name).collect(Collectors.toSet()), actualDecimalFields.stream().map(Schema.Field::name).collect(Collectors.toSet()));
-                if (!readDecimalsOnly.isEmpty()) {
-                    System.out.println("Fields not marked as decimals when written are being read as decimals");
-                    System.out.println(Arrays.toString(readDecimalsOnly.toArray()));
+                if (!readDecimalFields.equals(actualDecimalFields)) {
+                    Set<String> readDecimalsOnly = Sets.difference(readDecimalFields.stream().map(Schema.Field::name).collect(Collectors.toSet()), actualDecimalFields.stream().map(Schema.Field::name).collect(Collectors.toSet()));
+                    if (!readDecimalsOnly.isEmpty()) {
+                        System.out.println("Fields not marked as decimals when written are being read as decimals");
+                        System.out.println(Arrays.toString(readDecimalsOnly.toArray()));
+                    }
+                    Set<String> writeDecimals = Sets.difference(actualDecimalFields.stream().map(Schema.Field::name).collect(Collectors.toSet()), readDecimalFields.stream().map(Schema.Field::name).collect(Collectors.toSet()));
+                    if (!writeDecimals.isEmpty()) {
+                        System.out.println("Fields marked as decimals when written are being read not as decimals");
+                        System.out.println(Arrays.toString(writeDecimals.toArray()));
+                    }
                 }
-                Set<String> writeDecimals = Sets.difference(actualDecimalFields.stream().map(Schema.Field::name).collect(Collectors.toSet()), readDecimalFields.stream().map(Schema.Field::name).collect(Collectors.toSet()));
-                if (!writeDecimals.isEmpty()) {
-                    System.out.println("Fields marked as decimals when written are being read not as decimals");
-                    System.out.println(Arrays.toString(writeDecimals.toArray()));
+            }
+
+            verify(!readDecimalFields.isEmpty());
+            GenericRecord record;
+            while (dataFileReader.hasNext()) {
+                record = dataFileReader.next();
+                for (Schema.Field field : readDecimalFields) {
+                    Object decimal = record.get(field.name());
+                    if (decimal != null) {
+                        Function<Object, byte[]> byteExtract = byteExtract(field.schema());
+                        byte[] decimalBigEndianBytes = byteExtract.apply(decimal);
+                        try {
+                            Int128.fromBigEndian(decimalBigEndianBytes);
+                        }
+                        catch (Throwable t) {
+                            System.out.println("Error parsing decimal bytes as decimal for field " + field.name());
+                            System.out.println("Decimal schema " + field.schema());
+                            System.out.println(Throwables.getStackTraceAsString(t));
+                            System.out.println("Decimal Bytes of size " + decimalBigEndianBytes.length);
+                            System.out.println(Arrays.toString(decimalBigEndianBytes));
+                        }
+                    }
                 }
             }
         }
-
-        verify(!readDecimalFields.isEmpty());
-        GenericRecord record;
-        while (dataFileReader.hasNext()) {
-            record = dataFileReader.next();
-            for (Schema.Field field : readDecimalFields) {
-                Object decimal = record.get(field.name());
-                if (decimal != null) {
-                    Function<Object, byte[]> byteExtract = byteExtract(field.schema());
-                    byte[] decimalBigEndianBytes = byteExtract.apply(decimal);
-                    try {
-                        Int128.fromBigEndian(decimalBigEndianBytes);
-                    }
-                    catch (Throwable t) {
-                        System.out.println("Error parsing decimal bytes as decimal for field " + field.name());
-                        System.out.println("Decimal schema " + field.schema());
-                        System.out.println(Throwables.getStackTraceAsString(t));
-                        System.out.println("Decimal Bytes of size " + decimalBigEndianBytes.length);
-                        System.out.println(Arrays.toString(decimalBigEndianBytes));
-                    }
-                }
-            }
+        finally {
+            dataFileReader.close();
         }
     }
 
