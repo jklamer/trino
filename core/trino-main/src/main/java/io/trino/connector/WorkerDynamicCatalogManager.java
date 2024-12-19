@@ -172,7 +172,7 @@ public class WorkerDynamicCatalogManager
             Iterator<Entry<CatalogHandle, CatalogConnector>> iterator = catalogs.entrySet().iterator();
             while (iterator.hasNext()) {
                 Entry<CatalogHandle, CatalogConnector> entry = iterator.next();
-                if (!catalogsInUse.contains(entry.getKey())) {
+                if (!catalogsInUse.contains(entry.getKey()) && !entry.getKey().equals(GlobalSystemConnector.CATALOG_HANDLE)) {
                     iterator.remove();
                     removedCatalogs.add(entry.getValue());
                 }
